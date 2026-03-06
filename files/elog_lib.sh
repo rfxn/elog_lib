@@ -230,6 +230,26 @@ _elog_truncate_check() {
 	fi
 }
 
+# _elog_auto_enable — enable output modules on first use (pre-init fallback)
+# Enables all 4 built-in modules (gated by file variable).
+# Source filtering in _elog_dispatch prevents cross-contamination.
+_elog_auto_enable() {
+	[ "$_ELOG_INIT_DONE" -ne 0 ] && return 0
+	if [ -n "${ELOG_LOG_FILE:-}" ] && ! elog_output_enabled "file"; then
+		elog_output_enable "file" 2>/dev/null || true  # safe: module may not be registered yet
+	fi
+	if [ -n "${ELOG_AUDIT_FILE:-}" ] && ! elog_output_enabled "audit_file"; then
+		elog_output_enable "audit_file" 2>/dev/null || true  # safe: module may not be registered yet
+	fi
+	if [ -n "${ELOG_SYSLOG_FILE:-}" ] && ! elog_output_enabled "syslog_file"; then
+		elog_output_enable "syslog_file" 2>/dev/null || true  # safe: module may not be registered yet
+	fi
+	if ! elog_output_enabled "stdout"; then
+		elog_output_enable "stdout" 2>/dev/null || true  # safe: module may not be registered yet
+	fi
+	_ELOG_INIT_DONE=1
+}
+
 # ---------------------------------------------------------------------------
 # Output Module Registry
 # ---------------------------------------------------------------------------
@@ -450,18 +470,7 @@ elog() {
 	[ "$_level_num" -lt "$_min_level" ] && return 0
 
 	# Fallback: auto-enable modules if init wasn't called (backward compat)
-	if [ "$_ELOG_INIT_DONE" -eq 0 ]; then
-		if [ -n "${ELOG_LOG_FILE:-}" ] && ! elog_output_enabled "file"; then
-			elog_output_enable "file" 2>/dev/null || true
-		fi
-		if [ -n "${ELOG_SYSLOG_FILE:-}" ] && ! elog_output_enabled "syslog_file"; then
-			elog_output_enable "syslog_file" 2>/dev/null || true
-		fi
-		if ! elog_output_enabled "stdout"; then
-			elog_output_enable "stdout" 2>/dev/null || true
-		fi
-		_ELOG_INIT_DONE=1
-	fi
+	_elog_auto_enable
 
 	# info+ levels: format and route
 	local _ts _host _app _pid
