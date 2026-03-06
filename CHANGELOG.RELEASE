@@ -11,6 +11,8 @@ elog_lib v1.0.0 | Mar 06 2026:
   [New] Legacy symlink support via ELOG_LEGACY_LOG
   [New] Backward-compatible elog() API with dispatch-based routing
   [New] elog_event() structured event envelope with JSON dispatch to audit log
+  [New] Event taxonomy with 23 canonical types across 7 categories
+  [New] Default severity mapping via _elog_event_severity() (error/warn/info)
   [New] BATS test suite with batsman CI (9-OS matrix)
 
 -- Changes --

@@ -433,6 +433,57 @@ _elog_dispatch() {
 }
 
 # ---------------------------------------------------------------------------
+# Event Taxonomy
+# ---------------------------------------------------------------------------
+
+# _elog_event_type_valid(type) — returns 0 for known event types, 1 for unknown
+# 23 canonical event types across 7 categories. Guidance only — elog_event()
+# does not enforce; consumers may pass unknown types.
+_elog_event_type_valid() {
+	case "${1:-}" in
+		# Detection
+		threat_detected|threshold_exceeded|pattern_matched|scan_started|scan_completed)
+			return 0 ;;
+		# Enforcement
+		block_added|block_removed|block_escalated|quarantine_added|quarantine_removed)
+			return 0 ;;
+		# Trust
+		trust_added|trust_removed)
+			return 0 ;;
+		# Network
+		rule_loaded|rule_removed|service_state)
+			return 0 ;;
+		# Alert
+		alert_sent|alert_failed)
+			return 0 ;;
+		# Monitor
+		monitor_started|monitor_stopped)
+			return 0 ;;
+		# System
+		config_loaded|config_error|file_cleaned|error_occurred)
+			return 0 ;;
+		*)
+			return 1 ;;
+	esac
+}
+
+# _elog_event_severity(type) — returns default severity name for event type
+# error: block_escalated, alert_failed, config_error, error_occurred
+# warn:  threat_detected, threshold_exceeded, block_added, quarantine_added
+# info:  all others + unknown types
+# No types default to critical — consumer must escalate explicitly.
+_elog_event_severity() {
+	case "${1:-}" in
+		block_escalated|alert_failed|config_error|error_occurred)
+			echo "error" ;;
+		threat_detected|threshold_exceeded|block_added|quarantine_added)
+			echo "warn" ;;
+		*)
+			echo "info" ;;
+	esac
+}
+
+# ---------------------------------------------------------------------------
 # Public API: elog()
 # ---------------------------------------------------------------------------
 

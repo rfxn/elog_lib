@@ -13,4 +13,6 @@ elog_lib CHANGELOG
   [New] Backward-compatible elog() API with dispatch-based routing
   [New] BATS test suite with batsman CI (9-OS matrix)
   [New] elog_event() structured event envelope with JSON dispatch to audit log
+  [New] Event taxonomy with 23 canonical types across 7 categories
+  [New] Default severity mapping via _elog_event_severity() (error/warn/info)
   [Change] Extract _elog_auto_enable() helper from elog() for DRY pre-init fallback
