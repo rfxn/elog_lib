@@ -17,4 +17,5 @@ elog_lib CHANGELOG
   [New] Default severity mapping via _elog_event_severity() (error/warn/info)
   [New] elog_critical() convenience wrapper completing 5-level API symmetry
   [New] Backward compatibility test suite validating no-init drop-in pattern
+  [New] README.md with full API reference, event taxonomy, and usage guide
   [Change] Extract _elog_auto_enable() helper from elog() for DRY pre-init fallback
