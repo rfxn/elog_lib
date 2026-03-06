@@ -12,4 +12,5 @@ elog_lib CHANGELOG
   [New] Legacy symlink support via ELOG_LEGACY_LOG
   [New] Backward-compatible elog() API with dispatch-based routing
   [New] BATS test suite with batsman CI (9-OS matrix)
+  [New] elog_event() structured event envelope with JSON dispatch to audit log
   [Change] Extract _elog_auto_enable() helper from elog() for DRY pre-init fallback

@@ -10,6 +10,7 @@ elog_lib v1.0.0 | Mar 06 2026:
   [New] Log truncation support via ELOG_LOG_MAX_LINES (inode-safe)
   [New] Legacy symlink support via ELOG_LEGACY_LOG
   [New] Backward-compatible elog() API with dispatch-based routing
+  [New] elog_event() structured event envelope with JSON dispatch to audit log
   [New] BATS test suite with batsman CI (9-OS matrix)
 
 -- Changes --
