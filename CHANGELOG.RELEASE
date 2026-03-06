@@ -1,0 +1,13 @@
+elog_lib v1.0.0 | Mar 06 2026:
+
+-- New Features --
+  [New] Standalone elog_lib repository extracted from BFD elog_lib.sh v1.0.0
+  [New] Deterministic log file architecture: dual log model (application + audit)
+  [New] elog_init() for log environment setup (directory, permissions, symlinks)
+  [New] elog_logrotate_snippet() generator for logrotate config
+  [New] Output module registry with parallel indexed arrays (file, audit_file, syslog_file, stdout)
+  [New] Source filtering per output module (all, elog, event)
+  [New] Log truncation support via ELOG_LOG_MAX_LINES (inode-safe)
+  [New] Legacy symlink support via ELOG_LEGACY_LOG
+  [New] Backward-compatible elog() API with dispatch-based routing
+  [New] BATS test suite with batsman CI (9-OS matrix)
