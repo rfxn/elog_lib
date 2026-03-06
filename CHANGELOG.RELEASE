@@ -5,9 +5,12 @@ elog_lib v1.0.0 | Mar 06 2026:
   [New] Deterministic log file architecture: dual log model (application + audit)
   [New] elog_init() for log environment setup (directory, permissions, symlinks)
   [New] elog_logrotate_snippet() generator for logrotate config
-  [New] Output module registry with parallel indexed arrays (file, audit_file, syslog_file, stdout)
-  [New] Source filtering per output module (all, elog, event)
+  [New] Output module registry with parallel indexed arrays and source filtering
   [New] Log truncation support via ELOG_LOG_MAX_LINES (inode-safe)
-  [New] Legacy symlink support via ELOG_LEGACY_LOG
   [New] Backward-compatible elog() API with dispatch-based routing
+  [New] elog_event() structured event envelope with JSONL dispatch to audit log
+  [New] Event taxonomy with 23 canonical types across 7 categories
+  [New] Default severity mapping via _elog_event_severity() (error/warn/info)
+  [New] elog_critical() convenience wrapper completing 5-level API symmetry
   [New] BATS test suite with batsman CI (9-OS matrix)
+  [New] README.md with full API reference, event taxonomy, and usage guide

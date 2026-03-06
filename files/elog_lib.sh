@@ -230,6 +230,26 @@ _elog_truncate_check() {
 	fi
 }
 
+# _elog_auto_enable — enable output modules on first use (pre-init fallback)
+# Enables all 4 built-in modules (gated by file variable).
+# Source filtering in _elog_dispatch prevents cross-contamination.
+_elog_auto_enable() {
+	[ "$_ELOG_INIT_DONE" -ne 0 ] && return 0
+	if [ -n "${ELOG_LOG_FILE:-}" ] && ! elog_output_enabled "file"; then
+		elog_output_enable "file" 2>/dev/null || true  # safe: module may not be registered yet
+	fi
+	if [ -n "${ELOG_AUDIT_FILE:-}" ] && ! elog_output_enabled "audit_file"; then
+		elog_output_enable "audit_file" 2>/dev/null || true  # safe: module may not be registered yet
+	fi
+	if [ -n "${ELOG_SYSLOG_FILE:-}" ] && ! elog_output_enabled "syslog_file"; then
+		elog_output_enable "syslog_file" 2>/dev/null || true  # safe: module may not be registered yet
+	fi
+	if ! elog_output_enabled "stdout"; then
+		elog_output_enable "stdout" 2>/dev/null || true  # safe: module may not be registered yet
+	fi
+	_ELOG_INIT_DONE=1
+}
+
 # ---------------------------------------------------------------------------
 # Output Module Registry
 # ---------------------------------------------------------------------------
@@ -413,6 +433,57 @@ _elog_dispatch() {
 }
 
 # ---------------------------------------------------------------------------
+# Event Taxonomy
+# ---------------------------------------------------------------------------
+
+# _elog_event_type_valid(type) — returns 0 for known event types, 1 for unknown
+# 23 canonical event types across 7 categories. Guidance only — elog_event()
+# does not enforce; consumers may pass unknown types.
+_elog_event_type_valid() {
+	case "${1:-}" in
+		# Detection
+		threat_detected|threshold_exceeded|pattern_matched|scan_started|scan_completed)
+			return 0 ;;
+		# Enforcement
+		block_added|block_removed|block_escalated|quarantine_added|quarantine_removed)
+			return 0 ;;
+		# Trust
+		trust_added|trust_removed)
+			return 0 ;;
+		# Network
+		rule_loaded|rule_removed|service_state)
+			return 0 ;;
+		# Alert
+		alert_sent|alert_failed)
+			return 0 ;;
+		# Monitor
+		monitor_started|monitor_stopped)
+			return 0 ;;
+		# System
+		config_loaded|config_error|file_cleaned|error_occurred)
+			return 0 ;;
+		*)
+			return 1 ;;
+	esac
+}
+
+# _elog_event_severity(type) — returns default severity name for event type
+# error: block_escalated, alert_failed, config_error, error_occurred
+# warn:  threat_detected, threshold_exceeded, block_added, quarantine_added
+# info:  all others + unknown types
+# No types default to critical — consumer must escalate explicitly.
+_elog_event_severity() {
+	case "${1:-}" in
+		block_escalated|alert_failed|config_error|error_occurred)
+			echo "error" ;;
+		threat_detected|threshold_exceeded|block_added|quarantine_added)
+			echo "warn" ;;
+		*)
+			echo "info" ;;
+	esac
+}
+
+# ---------------------------------------------------------------------------
 # Public API: elog()
 # ---------------------------------------------------------------------------
 
@@ -450,18 +521,7 @@ elog() {
 	[ "$_level_num" -lt "$_min_level" ] && return 0
 
 	# Fallback: auto-enable modules if init wasn't called (backward compat)
-	if [ "$_ELOG_INIT_DONE" -eq 0 ]; then
-		if [ -n "${ELOG_LOG_FILE:-}" ] && ! elog_output_enabled "file"; then
-			elog_output_enable "file" 2>/dev/null || true
-		fi
-		if [ -n "${ELOG_SYSLOG_FILE:-}" ] && ! elog_output_enabled "syslog_file"; then
-			elog_output_enable "syslog_file" 2>/dev/null || true
-		fi
-		if ! elog_output_enabled "stdout"; then
-			elog_output_enable "stdout" 2>/dev/null || true
-		fi
-		_ELOG_INIT_DONE=1
-	fi
+	_elog_auto_enable
 
 	# info+ levels: format and route
 	local _ts _host _app _pid
@@ -562,6 +622,104 @@ elog_debug() { elog debug "$@"; }
 elog_info()  { elog info "$@"; }
 elog_warn()  { elog warn "$@"; }
 elog_error() { elog error "$@"; }
+elog_critical() { elog critical "$@"; }
+
+# ---------------------------------------------------------------------------
+# Public API: elog_event()
+# ---------------------------------------------------------------------------
+
+# elog_event(event_type, severity, message [, key1=val1 ...])
+# Structured event logging — dispatches via api_source="event" to audit_file
+# and any custom modules registered with source="event" or source="all".
+#
+# - Empty type: stderr warning + return 1
+# - Empty message: return 0 (no output)
+# - Severity filtering: _elog_level_num < ELOG_LEVEL → suppress, return 0
+# - Builds JSON envelope with mandatory fields: ts, host, app, pid, type, level, msg
+# - Extracts {tag} from message; parses remaining args as key=value extra fields
+# - Does NOT increment _ELOG_WRITE_COUNT (audit log not subject to truncation)
+# - Returns 0 on success
+elog_event() {
+	local _type="${1:-}"
+	local _level="${2:-info}"
+	local _msg="${3:-}"
+
+	# Empty type — input validation error
+	if [ -z "$_type" ]; then
+		echo "elog_lib: elog_event() requires event_type as first argument" >&2
+		return 1
+	fi
+
+	# Empty message — no output
+	[ -z "$_msg" ] && return 0
+
+	# Severity filtering
+	local _level_num _min_level
+	_level_num=$(_elog_level_num "$_level")
+	_min_level="${ELOG_LEVEL:-1}"
+	[ "$_level_num" -lt "$_min_level" ] && return 0
+
+	# Pre-init fallback
+	_elog_auto_enable
+
+	# Timestamp and identity
+	local _ts _host _app _pid
+	_ts=$(date +"${ELOG_TS_FORMAT:-%b %e %H:%M:%S}")
+	_host=$(hostname -s 2>/dev/null || hostname)
+	_app="${ELOG_APP:-${0##*/}}"
+	_pid="$$"
+
+	# Extract {tag} from message
+	local _tag _json_msg
+	_tag=$(_elog_extract_tag "$_msg")
+	if [ -n "$_tag" ]; then
+		_json_msg=$(_elog_strip_tag "$_msg")
+	else
+		_json_msg="$_msg"
+	fi
+
+	# JSON-escape mandatory fields
+	local _esc_msg _esc_type _iso_ts
+	_esc_msg=$(_elog_json_escape "$_json_msg")
+	_esc_type=$(_elog_json_escape "$_type")
+	_iso_ts=$(date +"%Y-%m-%dT%H:%M:%S%z")
+
+	# Parse key=value extra fields from remaining args
+	local _pair _key _val _esc_key _esc_val _extra=""
+	shift 3 2>/dev/null || true  # safe: fewer than 3 args means no extras
+	for _pair in "$@"; do
+		_key="${_pair%%=*}"
+		_val="${_pair#*=}"
+		[ "$_key" = "$_pair" ] && continue  # no = found
+		[ -z "$_key" ] && continue           # empty key
+		_esc_key=$(_elog_json_escape "$_key")
+		_esc_val=$(_elog_json_escape "$_val")
+		_extra="${_extra},\"${_esc_key}\":\"${_esc_val}\""
+	done
+
+	# Build JSON envelope
+	local _json_line
+	_json_line="{\"ts\":\"${_iso_ts}\",\"host\":\"${_host}\",\"app\":\"${_app}\",\"pid\":${_pid},\"type\":\"${_esc_type}\",\"level\":\"${_level}\",\"msg\":\"${_esc_msg}\""
+	if [ -n "$_tag" ]; then
+		local _esc_tag
+		_esc_tag=$(_elog_json_escape "$_tag")
+		_json_line="${_json_line},\"tag\":\"${_esc_tag}\""
+	fi
+	_json_line="${_json_line}${_extra}}"
+
+	# Build classic line: timestamp host app(pid): [type] message
+	local _classic_line
+	if [ -n "$_tag" ]; then
+		_classic_line="$_ts $_host ${_app}(${_pid}): [${_type}] {${_tag}} ${_json_msg}"
+	else
+		_classic_line="$_ts $_host ${_app}(${_pid}): [${_type}] ${_json_msg}"
+	fi
+
+	# Dispatch via event api_source — reaches audit_file and source="all" modules
+	_elog_dispatch "event" "$_classic_line" "$_json_line" "$_level" "$_msg" ""
+
+	return 0
+}
 
 # ---------------------------------------------------------------------------
 # Built-in Module Registration
