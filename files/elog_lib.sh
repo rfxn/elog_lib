@@ -622,6 +622,7 @@ elog_debug() { elog debug "$@"; }
 elog_info()  { elog info "$@"; }
 elog_warn()  { elog warn "$@"; }
 elog_error() { elog error "$@"; }
+elog_critical() { elog critical "$@"; }
 
 # ---------------------------------------------------------------------------
 # Public API: elog_event()
