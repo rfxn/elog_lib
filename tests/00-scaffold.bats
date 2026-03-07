@@ -25,9 +25,11 @@ teardown() {
 }
 
 @test "output registry arrays initialized with built-in modules" {
-	[[ ${#_ELOG_OUTPUT_NAMES[@]} -eq 4 ]]
+	[[ ${#_ELOG_OUTPUT_NAMES[@]} -eq 6 ]]
 	[[ "${_ELOG_OUTPUT_NAMES[0]}" == "file" ]]
 	[[ "${_ELOG_OUTPUT_NAMES[1]}" == "audit_file" ]]
 	[[ "${_ELOG_OUTPUT_NAMES[2]}" == "syslog_file" ]]
 	[[ "${_ELOG_OUTPUT_NAMES[3]}" == "stdout" ]]
+	[[ "${_ELOG_OUTPUT_NAMES[4]}" == "cef" ]]
+	[[ "${_ELOG_OUTPUT_NAMES[5]}" == "syslog_udp" ]]
 }

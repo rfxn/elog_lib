@@ -1,6 +1,17 @@
 elog_lib CHANGELOG
 ==================
 
+- v1.1.0 | Mar 06 2026:
+  [New] CEF output module with ArcSight Common Event Format (v0) support
+  [New] CEF severity mapping (debug=1, info=3, warn=5, error=7, critical=10)
+  [New] CEF header and extension escaping (pipe, backslash, equals, newline)
+  [New] Syslog UDP output module with RFC 5424 and RFC 3164 format support
+  [New] Fire-and-forget UDP delivery via /dev/udp with nc fallback
+  [New] Syslog severity mapping and PRI calculation (facility * 8 + severity)
+  [New] Configurable syslog payload format (classic, json, cef)
+  [New] Event context staging for SIEM handler access to structured event data
+  [New] 26 new tests across 07-elog-cef.bats and 08-elog-syslog-udp.bats
+
 - v1.0.0 | Mar 06 2026:
   [New] Standalone elog_lib repository extracted from BFD elog_lib.sh v1.0.0
   [New] Deterministic log file architecture: dual log model (application + audit)

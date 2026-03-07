@@ -1,7 +1,7 @@
 # elog_lib — Structured Event Logging for Bash
 
 [![CI](https://github.com/rfxn/elog_lib/actions/workflows/ci.yml/badge.svg)](https://github.com/rfxn/elog_lib/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/rfxn/elog_lib)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/rfxn/elog_lib)
 [![Bash](https://img.shields.io/badge/bash-4.1%2B-green.svg)](https://www.gnu.org/software/bash/)
 [![License](https://img.shields.io/badge/license-GPL%20v2-orange.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 
@@ -34,6 +34,8 @@ elog_event "config_loaded" "info" "configuration validated" "file=/etc/myapp.con
 - **Logrotate config generation** via `elog_logrotate_snippet()`
 - **Legacy log path symlinks** for backward-compatible log locations
 - **Pre-init auto-enable fallback** — works without calling `elog_init()` first
+- **CEF output module** — ArcSight Common Event Format (v0) with severity mapping
+- **Syslog UDP output module** — RFC 5424/3164 with fire-and-forget delivery
 - **Zero project-specific references** — all context via environment variables
 
 ## Platform Support
@@ -99,8 +101,8 @@ Standard paths: `/var/log/<project>/<project>.log` + `/var/log/<project>/audit.l
 
 ### Output Module Registry
 
-Four built-in output modules are registered at source time but start disabled
-(enabled by `elog_init()` or auto-enable fallback):
+Six output modules are registered at source time but start disabled
+(enabled by `elog_init()` or `elog_output_enable()`):
 
 | Module | Handler | Format | Source | Description |
 |--------|---------|--------|--------|-------------|
@@ -108,14 +110,17 @@ Four built-in output modules are registered at source time but start disabled
 | `audit_file` | `_elog_out_audit` | json | `event` | Append JSONL to `ELOG_AUDIT_FILE` |
 | `syslog_file` | `_elog_out_syslog_file` | classic | `elog` | Append to `ELOG_SYSLOG_FILE` |
 | `stdout` | `_elog_out_stdout` | classic | `all` | Terminal output with prefix modes |
+| `cef` | `_elog_out_cef` | cef | `event` | CEF format to `ELOG_CEF_FILE` |
+| `syslog_udp` | `_elog_out_syslog_udp` | classic | `all` | UDP syslog (RFC 5424/3164) |
 
 **Source filtering** prevents cross-contamination: `elog()` dispatches with
-`api_source="elog"` (reaches `file`, `syslog_file`, `stdout`), while
-`elog_event()` dispatches with `api_source="event"` (reaches `audit_file`,
-`stdout`). Modules with `source="all"` receive both.
+`api_source="elog"` (reaches `file`, `syslog_file`, `stdout`, `syslog_udp`),
+while `elog_event()` dispatches with `api_source="event"` (reaches
+`audit_file`, `stdout`, `cef`, `syslog_udp`). Modules with `source="all"`
+receive both.
 
 Custom modules can be registered with `elog_output_register` for additional
-output targets (e.g., CEF, remote syslog).
+output targets.
 
 ### Dispatch Flow
 
@@ -124,13 +129,14 @@ elog("info", "message")
   → severity filter (ELOG_LEVEL)
   → _elog_auto_enable (if no init)
   → build classic + JSON lines
-  → _elog_dispatch("elog", ...) → file, syslog_file, stdout
+  → _elog_dispatch("elog", ...) → file, syslog_file, stdout, syslog_udp
 
 elog_event("block_added", "warn", "blocked host", "ip=1.2.3.4")
   → severity filter (ELOG_LEVEL)
   → _elog_auto_enable (if no init)
   → build JSON envelope + classic line
-  → _elog_dispatch("event", ...) → audit_file, stdout
+  → stage event context + format CEF (if enabled)
+  → _elog_dispatch("event", ...) → audit_file, stdout, cef, syslog_udp
 ```
 
 ## API Reference
@@ -250,6 +256,16 @@ Internal functions (underscore prefix) are not part of the public API:
 - `_elog_event_type_valid(type)` — check if type is in canonical taxonomy
 - `_elog_event_severity(type)` — default severity for event type
 - `_elog_out_file/audit/syslog_file/stdout` — built-in output handlers
+- `_elog_severity_cef(level)` — map elog level to CEF severity (0-10)
+- `_elog_cef_escape_header(str)` / `_elog_cef_escape_ext(str)` — CEF escaping
+- `_elog_fmt_cef(type, level, msg, tag, extras)` — build CEF formatted string
+- `_elog_out_cef(line)` — CEF file output handler
+- `_elog_severity_syslog(level)` — map elog level to syslog severity (0-7)
+- `_elog_syslog_pri(facility, severity)` — compute syslog PRI value
+- `_elog_fmt_syslog_5424/3164(pri, ts, host, app, pid, msg)` — syslog formatters
+- `_elog_udp_detect()` — probe for `/dev/udp` and `nc` at init time
+- `_elog_udp_send(host, port, payload)` — fire-and-forget UDP send
+- `_elog_out_syslog_udp(line)` — syslog UDP output handler
 
 ## Environment Variables
 
@@ -271,6 +287,15 @@ Internal functions (underscore prefix) are not part of the public API:
 | `ELOG_ROTATE_FREQUENCY` | `weekly` | Logrotate frequency |
 | `ELOG_ROTATE_COUNT` | `12` | Logrotate keep count |
 | `ELOG_ROTATE_COMPRESS` | `compress` | Logrotate compression setting |
+| `ELOG_CEF_VENDOR` | `R-fx Networks` | CEF vendor field |
+| `ELOG_CEF_PRODUCT` | `${ELOG_APP}` | CEF product field |
+| `ELOG_CEF_VERSION` | `${ELOG_LIB_VERSION}` | CEF product version field |
+| `ELOG_CEF_FILE` | *(empty)* | CEF output file path (empty = no file output) |
+| `ELOG_SYSLOG_UDP_HOST` | *(empty)* | Target syslog server (empty = disabled) |
+| `ELOG_SYSLOG_UDP_PORT` | `514` | Target syslog port |
+| `ELOG_SYSLOG_UDP_FACILITY` | `1` | Syslog facility code (0-23; 1 = user) |
+| `ELOG_SYSLOG_UDP_FORMAT` | `5424` | Syslog format: `5424` or `3164` |
+| `ELOG_SYSLOG_UDP_PAYLOAD` | `classic` | Payload format: `classic`, `json`, or `cef` |
 
 ## Event Taxonomy
 
@@ -303,34 +328,79 @@ Internal functions (underscore prefix) are not part of the public API:
 | System | `file_cleaned` | info | Malicious file cleaned |
 | System | `error_occurred` | error | General error |
 
-## Custom Output Modules
+## SIEM Integration
 
-Register custom output modules for additional destinations:
+### CEF Output (ArcSight Common Event Format)
+
+Enable the built-in CEF module to write ArcSight-compatible event lines:
 
 ```bash
-# CEF output module example
-_my_cef_handler() {
-    local line="$1"
-    echo "$line" >> /var/log/cef.log
-}
-elog_output_register "cef" "_my_cef_handler" "classic" "event"
+source /opt/myapp/lib/elog_lib.sh
+ELOG_APP="myapp"
+ELOG_CEF_FILE="/var/log/myapp/cef.log"
+ELOG_CEF_VENDOR="R-fx Networks"
+elog_init
 elog_output_enable "cef"
-# Now elog_event() output also goes to /var/log/cef.log
+
+elog_event "block_added" "warn" "blocked host" "src=203.0.113.42" "reason=SSH"
+# Output: CEF:0|R-fx Networks|myapp|1.1.0|block_added|blocked host|5|src=203.0.113.42 reason=SSH
+```
+
+The CEF module only receives `elog_event()` output (source=event). Regular
+`elog()` calls do not produce CEF output. CEF severity mapping: debug=1,
+info=3, warn=5, error=7, critical=10.
+
+### Syslog UDP Output (RFC 5424/3164)
+
+Send log output to a remote syslog server via UDP:
+
+```bash
+source /opt/myapp/lib/elog_lib.sh
+ELOG_APP="myapp"
+ELOG_SYSLOG_UDP_HOST="syslog.example.com"
+ELOG_SYSLOG_UDP_PORT="514"
+ELOG_SYSLOG_UDP_FORMAT="5424"        # or "3164" for BSD format
+ELOG_SYSLOG_UDP_PAYLOAD="classic"    # or "json" or "cef"
+elog_init
+elog_output_enable "syslog_udp"
+
+elog info "sent to remote syslog"
+elog_event "block_added" "warn" "blocked host"
+# Both elog() and elog_event() reach syslog_udp (source=all)
+```
+
+UDP delivery uses fire-and-forget background subshells. Transport is
+auto-detected: bash `/dev/udp` first, then `nc` fallback. If neither is
+available, the module stays registered but sends nothing.
+
+### Custom Output Modules
+
+Register additional output modules for other destinations:
+
+```bash
+_my_handler() {
+    local line="$1"
+    echo "$line" >> /var/log/custom.log
+}
+elog_output_register "custom" "_my_handler" "json" "event"
+elog_output_enable "custom"
 ```
 
 ## Testing
 
-116 tests across 7 BATS files:
+Tests across 9 BATS files:
 
-| File | Tests | Coverage |
-|------|-------|----------|
-| `00-scaffold.bats` | 3 | Library loading, version, source guard |
-| `01-elog-core.bats` | 40 | elog(), formats, severity, debug, stdout, helpers |
-| `02-elog-init.bats` | 19 | elog_init(), permissions, symlinks, truncation |
-| `03-elog-output.bats` | 22 | Registry, dispatch, source filtering, format selection |
-| `04-elog-event.bats` | 16 | Event envelope, JSON, key=value, tag, filtering |
-| `05-elog-taxonomy.bats` | 8 | Type validation, severity mapping |
-| `06-elog-compat.bats` | 8 | Backward compat, no-init drop-in |
+| File | Coverage |
+|------|----------|
+| `00-scaffold.bats` | Library loading, version, source guard |
+| `01-elog-core.bats` | elog(), formats, severity, debug, stdout, helpers |
+| `02-elog-init.bats` | elog_init(), permissions, symlinks, truncation |
+| `03-elog-output.bats` | Registry, dispatch, source filtering, format selection |
+| `04-elog-event.bats` | Event envelope, JSON, key=value, tag, filtering |
+| `05-elog-taxonomy.bats` | Type validation, severity mapping |
+| `06-elog-compat.bats` | Backward compat, no-init drop-in |
+| `07-elog-cef.bats` | CEF output module, format, escaping, severity |
+| `08-elog-syslog-udp.bats` | Syslog UDP, RFC 5424/3164, PRI, payload formats |
 
 ```bash
 make -C tests test              # Debian 12 (primary)

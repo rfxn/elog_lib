@@ -1,16 +1,12 @@
-elog_lib v1.0.0 | Mar 06 2026:
+elog_lib v1.1.0 | Mar 06 2026:
 
 -- New Features --
-  [New] Standalone elog_lib repository extracted from BFD elog_lib.sh v1.0.0
-  [New] Deterministic log file architecture: dual log model (application + audit)
-  [New] elog_init() for log environment setup (directory, permissions, symlinks)
-  [New] elog_logrotate_snippet() generator for logrotate config
-  [New] Output module registry with parallel indexed arrays and source filtering
-  [New] Log truncation support via ELOG_LOG_MAX_LINES (inode-safe)
-  [New] Backward-compatible elog() API with dispatch-based routing
-  [New] elog_event() structured event envelope with JSONL dispatch to audit log
-  [New] Event taxonomy with 23 canonical types across 7 categories
-  [New] Default severity mapping via _elog_event_severity() (error/warn/info)
-  [New] elog_critical() convenience wrapper completing 5-level API symmetry
-  [New] BATS test suite with batsman CI (9-OS matrix)
-  [New] README.md with full API reference, event taxonomy, and usage guide
+  [New] CEF output module with ArcSight Common Event Format (v0) support
+  [New] CEF severity mapping (debug=1, info=3, warn=5, error=7, critical=10)
+  [New] CEF header and extension escaping (pipe, backslash, equals, newline)
+  [New] Syslog UDP output module with RFC 5424 and RFC 3164 format support
+  [New] Fire-and-forget UDP delivery via /dev/udp with nc fallback
+  [New] Syslog severity mapping and PRI calculation (facility * 8 + severity)
+  [New] Configurable syslog payload format (classic, json, cef)
+  [New] Event context staging for SIEM handler access to structured event data
+  [New] 26 new tests across 07-elog-cef.bats and 08-elog-syslog-udp.bats

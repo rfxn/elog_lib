@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# elog_lib.sh — Structured Event Logging Library 1.0.0
+# elog_lib.sh — Structured Event Logging Library 1.1.0
 ###
 # Copyright (C) 2002-2026 R-fx Networks <proj@rfxn.com>
 #                         Ryan MacDonald <ryan@rfxn.com>
@@ -29,7 +29,7 @@
 [[ -n "${_ELOG_LIB_LOADED:-}" ]] && return 0 2>/dev/null
 _ELOG_LIB_LOADED=1
 # shellcheck disable=SC2034 # version checked by consumers
-ELOG_LIB_VERSION="1.0.0"
+ELOG_LIB_VERSION="1.1.0"
 
 # --- Configuration variables (set by consumer before sourcing) ---
 # All use ${VAR:-default} — safe when sourced from inside functions (BATS).
@@ -50,11 +50,39 @@ ELOG_LIB_VERSION="1.0.0"
 # ELOG_ROTATE_FREQUENCY — logrotate frequency (default: weekly)
 # ELOG_ROTATE_COUNT — logrotate keep count (default: 12)
 # ELOG_ROTATE_COMPRESS — logrotate compress (default: compress)
+#
+# SIEM / CEF output:
+# ELOG_CEF_VENDOR      — CEF vendor field (default: "R-fx Networks")
+# ELOG_CEF_PRODUCT     — CEF product field (default: $ELOG_APP)
+# ELOG_CEF_VERSION     — CEF product version field (default: $ELOG_LIB_VERSION)
+# ELOG_CEF_FILE        — CEF output file path (empty = no file output)
+#
+# SIEM / Syslog UDP output:
+# ELOG_SYSLOG_UDP_HOST     — target syslog server (empty = disabled)
+# ELOG_SYSLOG_UDP_PORT     — target syslog port (default: 514)
+# ELOG_SYSLOG_UDP_FACILITY — syslog facility code 0-23 (default: 1 = user)
+# ELOG_SYSLOG_UDP_FORMAT   — "5424" or "3164" (default: 5424)
+# ELOG_SYSLOG_UDP_PAYLOAD  — payload format: "classic", "json", or "cef" (default: classic)
 
 # --- Internal state ---
 _ELOG_INIT_DONE=0
 _ELOG_WRITE_COUNT=0
 _ELOG_TRUNCATE_CHECK_INTERVAL=50
+
+# Event context staging — set by elog_event() before dispatch, read by SIEM handlers
+_ELOG_EVT_TS=""
+_ELOG_EVT_TYPE=""
+_ELOG_EVT_LEVEL=""
+_ELOG_EVT_MSG=""
+_ELOG_EVT_TAG=""
+_ELOG_EVT_EXTRAS=""
+_ELOG_EVT_HOST=""
+
+# Pre-formatted CEF line — set by elog_event() when cef module is enabled
+_ELOG_STAGE_CEF=""
+
+# UDP delivery method — detected at init or first use
+_ELOG_UDP_METHOD=""
 
 # --- Internal functions ---
 
@@ -173,6 +201,11 @@ elog_init() {
 	fi
 	if [ -n "${ELOG_SYSLOG_FILE:-}" ]; then
 		elog_output_enable "syslog_file" 2>/dev/null || true
+	fi
+
+	# Probe UDP transport if syslog_udp module is registered
+	if _elog_output_find "syslog_udp"; then
+		_elog_udp_detect
 	fi
 
 	_ELOG_INIT_DONE=1
@@ -393,6 +426,198 @@ _elog_out_stdout() {
 }
 
 # ---------------------------------------------------------------------------
+# CEF Output Module
+# ---------------------------------------------------------------------------
+
+# _elog_severity_cef(level) — map elog level name to CEF severity (0-10)
+_elog_severity_cef() {
+	case "${1:-info}" in
+		debug)    echo 1 ;;
+		info)     echo 3 ;;
+		warn)     echo 5 ;;
+		error)    echo 7 ;;
+		critical) echo 10 ;;
+		*)        echo 3 ;;
+	esac
+}
+
+# _elog_cef_escape_header(str) — escape pipe, backslash, and newline for CEF header fields
+_elog_cef_escape_header() {
+	local s="$1"
+	s="${s//\\/\\\\}"
+	s="${s//|/\\|}"
+	s="${s//$'\n'/\\n}"
+	echo "$s"
+}
+
+# _elog_cef_escape_ext(str) — escape equals, newline, backslash for CEF extension
+_elog_cef_escape_ext() {
+	local s="$1"
+	s="${s//\\/\\\\}"
+	s="${s//=/\\=}"
+	s="${s//$'\n'/\\n}"
+	echo "$s"
+}
+
+# _elog_fmt_cef(type, level, msg, tag, extras) — build CEF formatted string
+# CEF:0|vendor|product|version|signatureId|name|severity|extension
+_elog_fmt_cef() {
+	local _type="$1" _level="$2" _msg="$3" _tag="${4:-}" _extras="${5:-}"
+	local _vendor _product _version _sev _name _ext
+
+	_vendor=$(_elog_cef_escape_header "${ELOG_CEF_VENDOR:-R-fx Networks}")
+	_product=$(_elog_cef_escape_header "${ELOG_CEF_PRODUCT:-${ELOG_APP:-${0##*/}}}")
+	_version=$(_elog_cef_escape_header "${ELOG_CEF_VERSION:-${ELOG_LIB_VERSION}}")
+	_sev=$(_elog_severity_cef "$_level")
+
+	# Name field: first 128 chars of message, header-escaped
+	local _trunc_msg="${_msg:0:128}"
+	_name=$(_elog_cef_escape_header "$_trunc_msg")
+
+	# Build extension from tag + extras
+	_ext=""
+	if [ -n "$_tag" ]; then
+		local _esc_tag
+		_esc_tag=$(_elog_cef_escape_ext "$_tag")
+		_ext="tag=${_esc_tag}"
+	fi
+
+	# Parse extras (space-separated key=value pairs from _ELOG_EVT_EXTRAS)
+	if [ -n "$_extras" ]; then
+		local _pair _key _val _esc_val
+		# Use read loop over space-separated pairs
+		while IFS= read -r -d ' ' _pair || [ -n "$_pair" ]; do
+			_key="${_pair%%=*}"
+			_val="${_pair#*=}"
+			[ "$_key" = "$_pair" ] && continue  # no = found
+			[ -z "$_key" ] && continue
+			_esc_val=$(_elog_cef_escape_ext "$_val")
+			if [ -n "$_ext" ]; then
+				_ext="${_ext} ${_key}=${_esc_val}"
+			else
+				_ext="${_key}=${_esc_val}"
+			fi
+		done <<< "$_extras"
+	fi
+
+	echo "CEF:0|${_vendor}|${_product}|${_version}|${_type}|${_name}|${_sev}|${_ext}"
+}
+
+# _elog_out_cef(line) — handler: write CEF line to ELOG_CEF_FILE
+_elog_out_cef() {
+	local _line="$1"
+	if [ -n "${ELOG_CEF_FILE:-}" ]; then
+		echo "$_line" >> "$ELOG_CEF_FILE"
+	fi
+}
+
+# ---------------------------------------------------------------------------
+# Syslog UDP Output Module
+# ---------------------------------------------------------------------------
+
+# _elog_severity_syslog(level) — map elog level name to syslog severity (0-7)
+_elog_severity_syslog() {
+	case "${1:-info}" in
+		critical) echo 2 ;;
+		error)    echo 3 ;;
+		warn)     echo 4 ;;
+		info)     echo 6 ;;
+		debug)    echo 7 ;;
+		*)        echo 6 ;;
+	esac
+}
+
+# _elog_syslog_pri(facility, severity) — compute PRI value (facility * 8 + severity)
+_elog_syslog_pri() {
+	local _facility="${1:-1}" _severity="${2:-6}"
+	echo $(( _facility * 8 + _severity ))
+}
+
+# _elog_fmt_syslog_5424(pri, ts, host, app, pid, msg) — build RFC 5424 syslog line
+# Format: <PRI>1 TIMESTAMP HOSTNAME APP PID - - MSG
+_elog_fmt_syslog_5424() {
+	local _pri="$1" _ts="$2" _host="$3" _app="$4" _pid="$5" _msg="$6"
+	echo "<${_pri}>1 ${_ts} ${_host} ${_app} ${_pid} - - ${_msg}"
+}
+
+# _elog_fmt_syslog_3164(pri, ts, host, app, pid, msg) — build RFC 3164 syslog line
+# Format: <PRI>TIMESTAMP HOSTNAME APP[PID]: MSG
+_elog_fmt_syslog_3164() {
+	local _pri="$1" _ts="$2" _host="$3" _app="$4" _pid="$5" _msg="$6"
+	echo "<${_pri}>${_ts} ${_host} ${_app}[${_pid}]: ${_msg}"
+}
+
+# _elog_udp_detect() — probe for /dev/udp and nc at init time
+# Sets _ELOG_UDP_METHOD to "bash", "nc", or "none"
+_elog_udp_detect() {
+	# Test bash /dev/udp support — safe even if nothing listens on target
+	if (echo test > /dev/udp/127.0.0.1/1) 2>/dev/null; then
+		_ELOG_UDP_METHOD="bash"
+	elif command -v nc >/dev/null 2>&1; then
+		_ELOG_UDP_METHOD="nc"
+	else
+		_ELOG_UDP_METHOD="none"
+		echo "elog_lib: syslog_udp: no UDP transport available (no /dev/udp, no nc)" >&2
+	fi
+}
+
+# _elog_udp_send(host, port, payload) — fire-and-forget background send
+_elog_udp_send() {
+	local _host="$1" _port="$2" _payload="$3"
+	# Fire-and-forget via background subshell — caller never blocks
+	( case "$_ELOG_UDP_METHOD" in
+		bash) echo "$_payload" > "/dev/udp/${_host}/${_port}" ;;
+		nc)   echo "$_payload" | nc -w1 -u "$_host" "$_port" ;;
+	esac ) 2>/dev/null &  # suppress errors from background delivery
+}
+
+# _elog_out_syslog_udp(line) — handler: wrap in syslog header, send via UDP
+_elog_out_syslog_udp() {
+	local _line="$1"
+
+	# Guard: no host configured = no-op
+	[ -z "${ELOG_SYSLOG_UDP_HOST:-}" ] && return 0
+
+	# Lazy UDP detection if not yet probed
+	if [ -z "$_ELOG_UDP_METHOD" ]; then
+		_elog_udp_detect
+	fi
+	# No transport available — silent no-op
+	[ "$_ELOG_UDP_METHOD" = "none" ] && return 0
+
+	local _facility="${ELOG_SYSLOG_UDP_FACILITY:-1}"
+	local _level="${_ELOG_EVT_LEVEL:-info}"
+	local _sev _pri
+	_sev=$(_elog_severity_syslog "$_level")
+	_pri=$(_elog_syslog_pri "$_facility" "$_sev")
+
+	local _host _app _pid _ts
+	_host=$(hostname -s 2>/dev/null || hostname)
+	_app="${ELOG_APP:-${0##*/}}"
+	_pid="$$"
+
+	# Select payload based on ELOG_SYSLOG_UDP_PAYLOAD config
+	local _payload="$_line"
+	local _payload_type="${ELOG_SYSLOG_UDP_PAYLOAD:-classic}"
+	if [ "$_payload_type" = "cef" ] && [ -n "$_ELOG_STAGE_CEF" ]; then
+		_payload="$_ELOG_STAGE_CEF"
+	fi
+
+	# Build syslog frame
+	local _syslog_line
+	local _format="${ELOG_SYSLOG_UDP_FORMAT:-5424}"
+	if [ "$_format" = "3164" ]; then
+		_ts=$(date +"%b %e %H:%M:%S")
+		_syslog_line=$(_elog_fmt_syslog_3164 "$_pri" "$_ts" "$_host" "$_app" "$_pid" "$_payload")
+	else
+		_ts=$(date +"%Y-%m-%dT%H:%M:%S%z")
+		_syslog_line=$(_elog_fmt_syslog_5424 "$_pri" "$_ts" "$_host" "$_app" "$_pid" "$_payload")
+	fi
+
+	_elog_udp_send "${ELOG_SYSLOG_UDP_HOST}" "${ELOG_SYSLOG_UDP_PORT:-514}" "$_syslog_line"
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -420,6 +645,7 @@ _elog_dispatch() {
 		# Select formatted line based on module's declared format
 		case "$_format" in
 			json)    _line="$_json" ;;
+			cef)     _line="$_ELOG_STAGE_CEF" ;;
 			*)       _line="$_classic" ;;
 		esac
 
@@ -561,7 +787,10 @@ elog() {
 			_out_classic="$_classic_line"
 		fi
 		_out_json="$_json_line"
+		# Stage level for SIEM handlers (syslog_udp uses _ELOG_EVT_LEVEL)
+		_ELOG_EVT_LEVEL="$_level"
 		_elog_dispatch "elog" "$_out_classic" "$_out_json" "$_level" "$_msg" "$_stdout_flag"
+		_ELOG_EVT_LEVEL=""
 	else
 		# No modules registered — direct write (pre-init / backward compat)
 		if [ -n "${ELOG_LOG_FILE:-}" ]; then
@@ -685,7 +914,8 @@ elog_event() {
 	_iso_ts=$(date +"%Y-%m-%dT%H:%M:%S%z")
 
 	# Parse key=value extra fields from remaining args
-	local _pair _key _val _esc_key _esc_val _extra=""
+	# Build both JSON extras and raw extras (for SIEM handlers) in single pass
+	local _pair _key _val _esc_key _esc_val _extra="" _raw_extras=""
 	shift 3 2>/dev/null || true  # safe: fewer than 3 args means no extras
 	for _pair in "$@"; do
 		_key="${_pair%%=*}"
@@ -695,6 +925,12 @@ elog_event() {
 		_esc_key=$(_elog_json_escape "$_key")
 		_esc_val=$(_elog_json_escape "$_val")
 		_extra="${_extra},\"${_esc_key}\":\"${_esc_val}\""
+		# Raw extras for SIEM handlers (space-separated key=value)
+		if [ -n "$_raw_extras" ]; then
+			_raw_extras="${_raw_extras} ${_key}=${_val}"
+		else
+			_raw_extras="${_key}=${_val}"
+		fi
 	done
 
 	# Build JSON envelope
@@ -715,8 +951,33 @@ elog_event() {
 		_classic_line="$_ts $_host ${_app}(${_pid}): [${_type}] ${_json_msg}"
 	fi
 
+	# Stage event context for SIEM handlers (CEF, syslog_udp)
+	_ELOG_EVT_TS="$_iso_ts"
+	_ELOG_EVT_TYPE="$_type"
+	_ELOG_EVT_LEVEL="$_level"
+	_ELOG_EVT_MSG="$_json_msg"
+	_ELOG_EVT_TAG="$_tag"
+	_ELOG_EVT_HOST="$_host"
+	_ELOG_EVT_EXTRAS="$_raw_extras"
+
+	# Pre-format CEF line if cef module is enabled (avoid overhead otherwise)
+	_ELOG_STAGE_CEF=""
+	if elog_output_enabled "cef"; then
+		_ELOG_STAGE_CEF=$(_elog_fmt_cef "$_type" "$_level" "$_json_msg" "$_tag" "$_ELOG_EVT_EXTRAS")
+	fi
+
 	# Dispatch via event api_source — reaches audit_file and source="all" modules
 	_elog_dispatch "event" "$_classic_line" "$_json_line" "$_level" "$_msg" ""
+
+	# Clear staging globals
+	_ELOG_EVT_TS=""
+	_ELOG_EVT_TYPE=""
+	_ELOG_EVT_LEVEL=""
+	_ELOG_EVT_MSG=""
+	_ELOG_EVT_TAG=""
+	_ELOG_EVT_EXTRAS=""
+	_ELOG_EVT_HOST=""
+	_ELOG_STAGE_CEF=""
 
 	return 0
 }
@@ -734,3 +995,6 @@ elog_output_register "file" "_elog_out_file" "classic" "elog"
 elog_output_register "audit_file" "_elog_out_audit" "json" "event"
 elog_output_register "syslog_file" "_elog_out_syslog_file" "classic" "elog"
 elog_output_register "stdout" "_elog_out_stdout" "classic" "all"
+# SIEM output modules — disabled by default, consumers enable with elog_output_enable
+elog_output_register "cef" "_elog_out_cef" "cef" "event"
+elog_output_register "syslog_udp" "_elog_out_syslog_udp" "classic" "all"
