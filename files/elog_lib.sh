@@ -203,8 +203,10 @@ elog_init() {
 		elog_output_enable "syslog_file" 2>/dev/null || true
 	fi
 
-	# Probe UDP transport if syslog_udp module is registered
-	if _elog_output_find "syslog_udp"; then
+	# Probe UDP transport only if syslog_udp module is actually enabled
+	# (_elog_output_find always succeeds since syslog_udp is always registered;
+	# lazy detection in _elog_out_syslog_udp handles post-init enablement)
+	if elog_output_enabled "syslog_udp"; then
 		_elog_udp_detect
 	fi
 
@@ -470,6 +472,10 @@ _elog_fmt_cef() {
 	_version=$(_elog_cef_escape_header "${ELOG_CEF_VERSION:-${ELOG_LIB_VERSION}}")
 	_sev=$(_elog_severity_cef "$_level")
 
+	# SignatureId: header-escaped type for defensive correctness
+	local _sig_id
+	_sig_id=$(_elog_cef_escape_header "$_type")
+
 	# Name field: first 128 chars of message, header-escaped
 	local _trunc_msg="${_msg:0:128}"
 	_name=$(_elog_cef_escape_header "$_trunc_msg")
@@ -500,7 +506,7 @@ _elog_fmt_cef() {
 		done <<< "$_extras"
 	fi
 
-	echo "CEF:0|${_vendor}|${_product}|${_version}|${_type}|${_name}|${_sev}|${_ext}"
+	echo "CEF:0|${_vendor}|${_product}|${_version}|${_sig_id}|${_name}|${_sev}|${_ext}"
 }
 
 # _elog_out_cef(line) — handler: write CEF line to ELOG_CEF_FILE
@@ -599,6 +605,7 @@ _elog_out_syslog_udp() {
 	# Select payload based on ELOG_SYSLOG_UDP_PAYLOAD config
 	local _payload="$_line"
 	local _payload_type="${ELOG_SYSLOG_UDP_PAYLOAD:-classic}"
+	# cef payload requires cef module enabled; falls back to classic if _ELOG_STAGE_CEF empty
 	if [ "$_payload_type" = "cef" ] && [ -n "$_ELOG_STAGE_CEF" ]; then
 		_payload="$_ELOG_STAGE_CEF"
 	fi

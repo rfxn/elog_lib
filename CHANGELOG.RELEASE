@@ -9,4 +9,8 @@ elog_lib v1.1.0 | Mar 06 2026:
   [New] Syslog severity mapping and PRI calculation (facility * 8 + severity)
   [New] Configurable syslog payload format (classic, json, cef)
   [New] Event context staging for SIEM handler access to structured event data
-  [New] 26 new tests across 07-elog-cef.bats and 08-elog-syslog-udp.bats
+  [New] 27 new tests across 07-elog-cef.bats and 08-elog-syslog-udp.bats
+  [Fix] UDP detection probe in elog_init() now gated by elog_output_enabled
+      instead of _elog_output_find (probe only fires when module is enabled)
+  [Fix] CEF signatureId field now header-escaped for defensive correctness
+  [Change] Documented silent CEF-to-classic fallback in syslog_udp payload selection

@@ -92,6 +92,18 @@ teardown() {
 	[[ "$line" == *'msg with \| pipe'* ]]
 }
 
+@test "CEF: backslash escaping in header fields" {
+	ELOG_CEF_VENDOR=$'Ven\\dor'
+	elog_output_enable "cef"
+	elog_event "block_added" "warn" $'msg with \\ backslash' > /dev/null
+	local line
+	line=$(cat "$ELOG_CEF_FILE")
+	# Backslash in vendor header should be escaped to \\ in CEF output
+	# Use grep -F for exact literal matching (avoids glob/regex escaping complexity)
+	echo "$line" | grep -qF 'Ven\\dor'
+	echo "$line" | grep -qF 'msg with \\ backslash'
+}
+
 @test "CEF: equals escaping in extension values" {
 	elog_output_enable "cef"
 	elog_event "config_loaded" "info" "config ok" "detail=key=val" > /dev/null
