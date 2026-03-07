@@ -1,7 +1,7 @@
 # elog_lib — Structured Event Logging for Bash
 
 [![CI](https://github.com/rfxn/elog_lib/actions/workflows/ci.yml/badge.svg)](https://github.com/rfxn/elog_lib/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/rfxn/elog_lib)
+[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/rfxn/elog_lib)
 [![Bash](https://img.shields.io/badge/bash-4.1%2B-green.svg)](https://www.gnu.org/software/bash/)
 [![License](https://img.shields.io/badge/license-GPL%20v2-orange.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 
@@ -364,7 +364,7 @@ elog_init
 elog_output_enable "cef"
 
 elog_event "block_added" "warn" "blocked host" "src=203.0.113.42" "reason=SSH"
-# Output: CEF:0|R-fx Networks|myapp|1.2.0|block_added|blocked host|5|src=203.0.113.42 reason=SSH
+# Output: CEF:0|R-fx Networks|myapp|1.0.1|block_added|blocked host|5|src=203.0.113.42 reason=SSH
 ```
 
 The CEF module only receives `elog_event()` output (source=event). Regular
