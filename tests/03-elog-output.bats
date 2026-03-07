@@ -16,13 +16,13 @@ teardown() {
 # --- Registration ---
 
 @test "elog_output_register: registers new module" {
-	# Built-ins already registered (6), add a custom one
+	# Built-ins already registered (8), add a custom one
 	elog_output_register "custom" "my_handler" "json" "event"
-	[[ ${#_ELOG_OUTPUT_NAMES[@]} -eq 7 ]]
-	[[ "${_ELOG_OUTPUT_NAMES[6]}" == "custom" ]]
-	[[ "${_ELOG_OUTPUT_HANDLERS[6]}" == "my_handler" ]]
-	[[ "${_ELOG_OUTPUT_FORMATS[6]}" == "json" ]]
-	[[ "${_ELOG_OUTPUT_SOURCES[6]}" == "event" ]]
+	[[ ${#_ELOG_OUTPUT_NAMES[@]} -eq 9 ]]
+	[[ "${_ELOG_OUTPUT_NAMES[8]}" == "custom" ]]
+	[[ "${_ELOG_OUTPUT_HANDLERS[8]}" == "my_handler" ]]
+	[[ "${_ELOG_OUTPUT_FORMATS[8]}" == "json" ]]
+	[[ "${_ELOG_OUTPUT_SOURCES[8]}" == "event" ]]
 }
 
 @test "elog_output_register: new module starts disabled" {

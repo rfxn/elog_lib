@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# elog_lib.sh — Structured Event Logging Library 1.1.0
+# elog_lib.sh — Structured Event Logging Library 1.2.0
 ###
 # Copyright (C) 2002-2026 R-fx Networks <proj@rfxn.com>
 #                         Ryan MacDonald <ryan@rfxn.com>
@@ -29,7 +29,7 @@
 [[ -n "${_ELOG_LIB_LOADED:-}" ]] && return 0 2>/dev/null
 _ELOG_LIB_LOADED=1
 # shellcheck disable=SC2034 # version checked by consumers
-ELOG_LIB_VERSION="1.1.0"
+ELOG_LIB_VERSION="1.2.0"
 
 # --- Configuration variables (set by consumer before sourcing) ---
 # All use ${VAR:-default} — safe when sourced from inside functions (BATS).
@@ -63,6 +63,17 @@ ELOG_LIB_VERSION="1.1.0"
 # ELOG_SYSLOG_UDP_FACILITY — syslog facility code 0-23 (default: 1 = user)
 # ELOG_SYSLOG_UDP_FORMAT   — "5424" or "3164" (default: 5424)
 # ELOG_SYSLOG_UDP_PAYLOAD  — payload format: "classic", "json", or "cef" (default: classic)
+#
+# SIEM / GELF output (Graylog Extended Log Format):
+# ELOG_GELF_HOST      — Graylog server (empty = no-op)
+# ELOG_GELF_PORT      — Graylog input port (default: 12201)
+# ELOG_GELF_TRANSPORT — "udp" or "http" (default: udp)
+# ELOG_GELF_FILE      — capture file for testing/debug (empty = disabled)
+#
+# SIEM / ELK JSON output (ECS-aligned):
+# ELOG_ELK_URL   — Elasticsearch ingest URL (empty = no-op)
+# ELOG_ELK_INDEX — target index name (default: elog-events)
+# ELOG_ELK_FILE  — capture file for testing/debug (empty = disabled)
 
 # --- Internal state ---
 _ELOG_INIT_DONE=0
@@ -78,11 +89,16 @@ _ELOG_EVT_TAG=""
 _ELOG_EVT_EXTRAS=""
 _ELOG_EVT_HOST=""
 
-# Pre-formatted CEF line — set by elog_event() when cef module is enabled
+# Pre-formatted SIEM lines — set by elog_event() when modules are enabled
 _ELOG_STAGE_CEF=""
+_ELOG_STAGE_GELF=""
+_ELOG_STAGE_ELK=""
 
 # UDP delivery method — detected at init or first use
 _ELOG_UDP_METHOD=""
+
+# HTTP delivery method — detected at init or first use (curl, wget, or none)
+_ELOG_HTTP_METHOD=""
 
 # --- Internal functions ---
 
@@ -210,6 +226,12 @@ elog_init() {
 		_elog_udp_detect
 	fi
 
+	# Probe HTTP transport only if gelf or elk_json modules are actually enabled
+	# (lazy detection in handlers covers post-init enablement)
+	if elog_output_enabled "gelf" || elog_output_enabled "elk_json"; then
+		_elog_http_detect
+	fi
+
 	_ELOG_INIT_DONE=1
 	return 0
 }
@@ -314,7 +336,7 @@ _elog_output_find() {
 
 # elog_output_register name handler_fn format source — register an output module
 # Appends to parallel indexed arrays. Module starts disabled (enabled=0).
-# format: "classic", "json", "cef"
+# format: "classic", "json", "cef", "gelf", "elk"
 # source: "all" (elog+event), "elog" (app log only), "event" (structured events only)
 # Returns 1 if name is empty, handler_fn is empty, or name already registered.
 elog_output_register() {
@@ -495,6 +517,7 @@ _elog_fmt_cef() {
 		while IFS= read -r -d ' ' _pair || [ -n "$_pair" ]; do
 			_key="${_pair%%=*}"
 			_val="${_pair#*=}"
+			_val="${_val%$'\n'}"  # strip trailing newline from here-string
 			[ "$_key" = "$_pair" ] && continue  # no = found
 			[ -z "$_key" ] && continue
 			_esc_val=$(_elog_cef_escape_ext "$_val")
@@ -625,6 +648,285 @@ _elog_out_syslog_udp() {
 }
 
 # ---------------------------------------------------------------------------
+# HTTP Delivery Infrastructure
+# ---------------------------------------------------------------------------
+
+# _elog_http_detect() — probe for curl/wget at init time
+# Sets _ELOG_HTTP_METHOD to "curl", "wget", or "none"
+_elog_http_detect() {
+	if command -v curl >/dev/null 2>&1; then
+		_ELOG_HTTP_METHOD="curl"
+	elif command -v wget >/dev/null 2>&1; then
+		_ELOG_HTTP_METHOD="wget"
+	else
+		_ELOG_HTTP_METHOD="none"
+		echo "elog_lib: http: no HTTP transport available (no curl, no wget)" >&2
+	fi
+}
+
+# _elog_http_send(url, payload, content_type) — fire-and-forget HTTP POST
+_elog_http_send() {
+	local _url="$1" _payload="$2" _content_type="${3:-application/json}"
+
+	# Lazy HTTP detection if not yet probed
+	if [ -z "$_ELOG_HTTP_METHOD" ]; then
+		_elog_http_detect
+	fi
+	# No transport available — silent no-op
+	[ "$_ELOG_HTTP_METHOD" = "none" ] && return 0
+
+	# Fire-and-forget via background subshell — caller never blocks;
+	# stderr suppressed: network errors are non-fatal for logging
+	( case "$_ELOG_HTTP_METHOD" in
+		curl) curl -sf -X POST -H "Content-Type: ${_content_type}" \
+			-d "$_payload" --connect-timeout 3 --max-time 5 "$_url" ;;
+		wget) wget -q --timeout=5 --header="Content-Type: ${_content_type}" \
+			--post-data="$_payload" -O /dev/null "$_url" ;;
+	esac ) 2>/dev/null &  # suppress errors from background HTTP delivery
+}
+
+# ---------------------------------------------------------------------------
+# GELF Output Module (Graylog Extended Log Format 1.1)
+# ---------------------------------------------------------------------------
+
+# _elog_ts_epoch(iso_ts) — convert ISO 8601 timestamp to Unix epoch seconds
+# Uses GNU date -d for ISO-to-epoch conversion (works on all 9 target OSes)
+_elog_ts_epoch() {
+	local _ts="$1"
+	date -d "$_ts" +%s 2>/dev/null || echo "0"  # fallback: epoch 0 if parse fails
+}
+
+# _elog_fmt_gelf(type, level, msg, tag, extras, ts, host) — build GELF 1.1 JSON
+_elog_fmt_gelf() {
+	local _type="$1" _level="$2" _msg="$3" _tag="${4:-}" _extras="${5:-}"
+	local _ts="${6:-}" _host="${7:-}"
+	local _sev _epoch _app _pid
+
+	_sev=$(_elog_severity_syslog "$_level")
+	_epoch=$(_elog_ts_epoch "$_ts")
+	_app="${ELOG_APP:-${0##*/}}"
+	_pid="$$"
+
+	# short_message: first 256 chars; full_message only if truncated
+	local _short_msg="${_msg:0:256}"
+	local _esc_short _esc_host _esc_app _esc_type
+	_esc_short=$(_elog_json_escape "$_short_msg")
+	_esc_host=$(_elog_json_escape "$_host")
+	_esc_app=$(_elog_json_escape "$_app")
+	_esc_type=$(_elog_json_escape "$_type")
+
+	local _gelf="{\"version\":\"1.1\",\"host\":\"${_esc_host}\",\"short_message\":\"${_esc_short}\""
+
+	# full_message only when message exceeds 256 chars
+	if [ ${#_msg} -gt 256 ]; then
+		local _esc_full
+		_esc_full=$(_elog_json_escape "$_msg")
+		_gelf="${_gelf},\"full_message\":\"${_esc_full}\""
+	fi
+
+	_gelf="${_gelf},\"timestamp\":${_epoch},\"level\":${_sev}"
+	_gelf="${_gelf},\"_app\":\"${_esc_app}\",\"_pid\":${_pid},\"_event_type\":\"${_esc_type}\""
+
+	# Tag as custom field (only if non-empty)
+	if [ -n "$_tag" ]; then
+		local _esc_tag
+		_esc_tag=$(_elog_json_escape "$_tag")
+		_gelf="${_gelf},\"_tag\":\"${_esc_tag}\""
+	fi
+
+	# Parse extras — each key=value becomes _key custom field
+	if [ -n "$_extras" ]; then
+		local _pair _key _val _esc_key _esc_val
+		while IFS= read -r -d ' ' _pair || [ -n "$_pair" ]; do
+			_key="${_pair%%=*}"
+			_val="${_pair#*=}"
+			_val="${_val%$'\n'}"  # strip trailing newline from here-string
+			[ "$_key" = "$_pair" ] && continue  # no = found
+			[ -z "$_key" ] && continue
+			_esc_key=$(_elog_json_escape "$_key")
+			_esc_val=$(_elog_json_escape "$_val")
+			_gelf="${_gelf},\"_${_esc_key}\":\"${_esc_val}\""
+		done <<< "$_extras"
+	fi
+
+	_gelf="${_gelf}}"
+	echo "$_gelf"
+}
+
+# _elog_out_gelf(line) — handler: send GELF via configured transport
+_elog_out_gelf() {
+	local _line="$1"
+
+	# Write to capture file if configured (testing/debug)
+	if [ -n "${ELOG_GELF_FILE:-}" ]; then
+		echo "$_line" >> "$ELOG_GELF_FILE"
+	fi
+
+	# Guard: no host configured = no network send
+	[ -z "${ELOG_GELF_HOST:-}" ] && return 0
+
+	local _transport="${ELOG_GELF_TRANSPORT:-udp}"
+	local _port="${ELOG_GELF_PORT:-12201}"
+
+	case "$_transport" in
+		udp)
+			# Lazy UDP detection if not yet probed
+			if [ -z "$_ELOG_UDP_METHOD" ]; then
+				_elog_udp_detect
+			fi
+			[ "$_ELOG_UDP_METHOD" = "none" ] && return 0
+			_elog_udp_send "${ELOG_GELF_HOST}" "$_port" "$_line"
+			;;
+		http)
+			_elog_http_send "http://${ELOG_GELF_HOST}:${_port}/gelf" "$_line" "application/json"
+			;;
+	esac
+}
+
+# ---------------------------------------------------------------------------
+# ELK JSON Output Module (ECS-Aligned)
+# ---------------------------------------------------------------------------
+
+# _elog_ecs_category(event_type) — map elog event type to ECS event.category
+_elog_ecs_category() {
+	case "${1:-}" in
+		# Detection category
+		threat_detected|threshold_exceeded|pattern_matched|scan_started|scan_completed)
+			echo "intrusion_detection" ;;
+		# Enforcement category
+		block_added|block_removed|block_escalated|quarantine_added|quarantine_removed)
+			echo "intrusion_detection" ;;
+		# Trust category
+		trust_added|trust_removed)
+			echo "configuration" ;;
+		# Network category
+		rule_loaded|rule_removed|service_state)
+			echo "network" ;;
+		# Alert category
+		alert_sent|alert_failed)
+			echo "notification" ;;
+		# Monitor category
+		monitor_started|monitor_stopped)
+			echo "process" ;;
+		# System category
+		config_loaded|config_error|file_cleaned|error_occurred)
+			echo "configuration" ;;
+		*)
+			echo "event" ;;
+	esac
+}
+
+# _elog_ecs_type(event_type) — map elog event type to ECS event.type
+_elog_ecs_type() {
+	case "${1:-}" in
+		# Enforcement: block/quarantine actions
+		block_added|quarantine_added)
+			echo "denied" ;;
+		block_removed|quarantine_removed)
+			echo "allowed" ;;
+		block_escalated)
+			echo "denied" ;;
+		# Trust: configuration changes
+		trust_added|trust_removed)
+			echo "change" ;;
+		# Network: rule and service lifecycle
+		rule_loaded)
+			echo "connection" ;;
+		rule_removed)
+			echo "connection" ;;
+		service_state|monitor_started)
+			echo "start" ;;
+		monitor_stopped)
+			echo "end" ;;
+		# System: config and errors
+		config_loaded|file_cleaned)
+			echo "change" ;;
+		config_error|error_occurred|alert_failed)
+			echo "error" ;;
+		# Detection and alerts: informational
+		*)
+			echo "info" ;;
+	esac
+}
+
+# _elog_fmt_elk(type, level, msg, tag, extras, ts, host) — build ECS-aligned JSON
+_elog_fmt_elk() {
+	local _type="$1" _level="$2" _msg="$3" _tag="${4:-}" _extras="${5:-}"
+	local _ts="${6:-}" _host="${7:-}"
+	local _app _pid _category _ecs_type
+
+	_app="${ELOG_APP:-${0##*/}}"
+	_pid="$$"
+	_category=$(_elog_ecs_category "$_type")
+	_ecs_type=$(_elog_ecs_type "$_type")
+
+	# JSON-escape all variable fields
+	local _esc_ts _esc_level _esc_msg _esc_host _esc_app _esc_type
+	local _esc_category _esc_ecs_type
+	_esc_ts=$(_elog_json_escape "$_ts")
+	_esc_level=$(_elog_json_escape "$_level")
+	_esc_msg=$(_elog_json_escape "$_msg")
+	_esc_host=$(_elog_json_escape "$_host")
+	_esc_app=$(_elog_json_escape "$_app")
+	_esc_type=$(_elog_json_escape "$_type")
+	_esc_category=$(_elog_json_escape "$_category")
+	_esc_ecs_type=$(_elog_json_escape "$_ecs_type")
+
+	local _elk="{\"@timestamp\":\"${_esc_ts}\",\"log.level\":\"${_esc_level}\",\"message\":\"${_esc_msg}\""
+	_elk="${_elk},\"event.kind\":\"event\",\"event.category\":\"${_esc_category}\""
+	_elk="${_elk},\"event.type\":\"${_esc_ecs_type}\",\"event.action\":\"${_esc_type}\""
+	_elk="${_elk},\"host.name\":\"${_esc_host}\",\"process.name\":\"${_esc_app}\",\"process.pid\":${_pid}"
+
+	# Tags array from tag (only if non-empty)
+	if [ -n "$_tag" ]; then
+		local _esc_tag
+		_esc_tag=$(_elog_json_escape "$_tag")
+		_elk="${_elk},\"tags\":[\"${_esc_tag}\"]"
+	fi
+
+	# Labels object from extras (flat key=value map)
+	if [ -n "$_extras" ]; then
+		local _labels="" _pair _key _val _esc_key _esc_val
+		while IFS= read -r -d ' ' _pair || [ -n "$_pair" ]; do
+			_key="${_pair%%=*}"
+			_val="${_pair#*=}"
+			_val="${_val%$'\n'}"  # strip trailing newline from here-string
+			[ "$_key" = "$_pair" ] && continue  # no = found
+			[ -z "$_key" ] && continue
+			_esc_key=$(_elog_json_escape "$_key")
+			_esc_val=$(_elog_json_escape "$_val")
+			if [ -n "$_labels" ]; then
+				_labels="${_labels},\"${_esc_key}\":\"${_esc_val}\""
+			else
+				_labels="\"${_esc_key}\":\"${_esc_val}\""
+			fi
+		done <<< "$_extras"
+		if [ -n "$_labels" ]; then
+			_elk="${_elk},\"labels\":{${_labels}}"
+		fi
+	fi
+
+	_elk="${_elk}}"
+	echo "$_elk"
+}
+
+# _elog_out_elk_json(line) — handler: send ECS JSON via HTTP to Elasticsearch
+_elog_out_elk_json() {
+	local _line="$1"
+
+	# Write to capture file if configured (testing/debug)
+	if [ -n "${ELOG_ELK_FILE:-}" ]; then
+		echo "$_line" >> "$ELOG_ELK_FILE"
+	fi
+
+	# Guard: no URL configured = no network send
+	[ -z "${ELOG_ELK_URL:-}" ] && return 0
+
+	local _index="${ELOG_ELK_INDEX:-elog-events}"
+	_elog_http_send "${ELOG_ELK_URL}/${_index}/_doc" "$_line" "application/json"
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -653,6 +955,8 @@ _elog_dispatch() {
 		case "$_format" in
 			json)    _line="$_json" ;;
 			cef)     _line="$_ELOG_STAGE_CEF" ;;
+			gelf)    _line="$_ELOG_STAGE_GELF" ;;
+			elk)     _line="$_ELOG_STAGE_ELK" ;;
 			*)       _line="$_classic" ;;
 		esac
 
@@ -967,10 +1271,18 @@ elog_event() {
 	_ELOG_EVT_HOST="$_host"
 	_ELOG_EVT_EXTRAS="$_raw_extras"
 
-	# Pre-format CEF line if cef module is enabled (avoid overhead otherwise)
+	# Pre-format SIEM lines if modules are enabled (avoid overhead otherwise)
 	_ELOG_STAGE_CEF=""
 	if elog_output_enabled "cef"; then
 		_ELOG_STAGE_CEF=$(_elog_fmt_cef "$_type" "$_level" "$_json_msg" "$_tag" "$_ELOG_EVT_EXTRAS")
+	fi
+	_ELOG_STAGE_GELF=""
+	if elog_output_enabled "gelf"; then
+		_ELOG_STAGE_GELF=$(_elog_fmt_gelf "$_type" "$_level" "$_json_msg" "$_tag" "$_ELOG_EVT_EXTRAS" "$_iso_ts" "$_host")
+	fi
+	_ELOG_STAGE_ELK=""
+	if elog_output_enabled "elk_json"; then
+		_ELOG_STAGE_ELK=$(_elog_fmt_elk "$_type" "$_level" "$_json_msg" "$_tag" "$_ELOG_EVT_EXTRAS" "$_iso_ts" "$_host")
 	fi
 
 	# Dispatch via event api_source — reaches audit_file and source="all" modules
@@ -985,6 +1297,8 @@ elog_event() {
 	_ELOG_EVT_EXTRAS=""
 	_ELOG_EVT_HOST=""
 	_ELOG_STAGE_CEF=""
+	_ELOG_STAGE_GELF=""
+	_ELOG_STAGE_ELK=""
 
 	return 0
 }
@@ -1005,3 +1319,5 @@ elog_output_register "stdout" "_elog_out_stdout" "classic" "all"
 # SIEM output modules — disabled by default, consumers enable with elog_output_enable
 elog_output_register "cef" "_elog_out_cef" "cef" "event"
 elog_output_register "syslog_udp" "_elog_out_syslog_udp" "classic" "all"
+elog_output_register "gelf" "_elog_out_gelf" "gelf" "event"
+elog_output_register "elk_json" "_elog_out_elk_json" "elk" "event"

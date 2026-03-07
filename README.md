@@ -1,7 +1,7 @@
 # elog_lib — Structured Event Logging for Bash
 
 [![CI](https://github.com/rfxn/elog_lib/actions/workflows/ci.yml/badge.svg)](https://github.com/rfxn/elog_lib/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/rfxn/elog_lib)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/rfxn/elog_lib)
 [![Bash](https://img.shields.io/badge/bash-4.1%2B-green.svg)](https://www.gnu.org/software/bash/)
 [![License](https://img.shields.io/badge/license-GPL%20v2-orange.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 
@@ -36,6 +36,9 @@ elog_event "config_loaded" "info" "configuration validated" "file=/etc/myapp.con
 - **Pre-init auto-enable fallback** — works without calling `elog_init()` first
 - **CEF output module** — ArcSight Common Event Format (v0) with severity mapping
 - **Syslog UDP output module** — RFC 5424/3164 with fire-and-forget delivery
+- **GELF output module** — Graylog Extended Log Format 1.1 with UDP/HTTP transport
+- **ELK JSON output module** — Elasticsearch ECS-aligned JSON with HTTP delivery
+- **HTTP delivery infrastructure** — curl/wget auto-detection for GELF and ELK
 - **Zero project-specific references** — all context via environment variables
 
 ## Platform Support
@@ -101,7 +104,7 @@ Standard paths: `/var/log/<project>/<project>.log` + `/var/log/<project>/audit.l
 
 ### Output Module Registry
 
-Six output modules are registered at source time but start disabled
+Eight output modules are registered at source time but start disabled
 (enabled by `elog_init()` or `elog_output_enable()`):
 
 | Module | Handler | Format | Source | Description |
@@ -112,12 +115,14 @@ Six output modules are registered at source time but start disabled
 | `stdout` | `_elog_out_stdout` | classic | `all` | Terminal output with prefix modes |
 | `cef` | `_elog_out_cef` | cef | `event` | CEF format to `ELOG_CEF_FILE` |
 | `syslog_udp` | `_elog_out_syslog_udp` | classic | `all` | UDP syslog (RFC 5424/3164) |
+| `gelf` | `_elog_out_gelf` | gelf | `event` | GELF 1.1 via UDP or HTTP |
+| `elk_json` | `_elog_out_elk_json` | elk | `event` | ECS-aligned JSON via HTTP |
 
 **Source filtering** prevents cross-contamination: `elog()` dispatches with
 `api_source="elog"` (reaches `file`, `syslog_file`, `stdout`, `syslog_udp`),
 while `elog_event()` dispatches with `api_source="event"` (reaches
-`audit_file`, `stdout`, `cef`, `syslog_udp`). Modules with `source="all"`
-receive both.
+`audit_file`, `stdout`, `cef`, `syslog_udp`, `gelf`, `elk_json`). Modules
+with `source="all"` receive both.
 
 Custom modules can be registered with `elog_output_register` for additional
 output targets.
@@ -135,8 +140,8 @@ elog_event("block_added", "warn", "blocked host", "ip=1.2.3.4")
   → severity filter (ELOG_LEVEL)
   → _elog_auto_enable (if no init)
   → build JSON envelope + classic line
-  → stage event context + format CEF (if enabled)
-  → _elog_dispatch("event", ...) → audit_file, stdout, cef, syslog_udp
+  → stage event context + format CEF/GELF/ELK (if enabled)
+  → _elog_dispatch("event", ...) → audit_file, stdout, cef, syslog_udp, gelf, elk_json
 ```
 
 ## API Reference
@@ -222,7 +227,7 @@ Register a custom output module.
 **Arguments:**
 - `name` — module identifier
 - `handler_fn` — function name to call with formatted line
-- `format` — `classic`, `json`, or `cef` (selects which formatted line to pass)
+- `format` — `classic`, `json`, `cef`, `gelf`, or `elk` (selects which formatted line to pass)
 - `source` — `all`, `elog`, or `event` (source filter)
 
 **Returns:** 0 on success, 1 if name/handler empty or name already registered.
@@ -266,6 +271,15 @@ Internal functions (underscore prefix) are not part of the public API:
 - `_elog_udp_detect()` — probe for `/dev/udp` and `nc` at init time
 - `_elog_udp_send(host, port, payload)` — fire-and-forget UDP send
 - `_elog_out_syslog_udp(line)` — syslog UDP output handler
+- `_elog_http_detect()` — probe for `curl` and `wget` at init time
+- `_elog_http_send(url, payload, content_type)` — fire-and-forget HTTP POST
+- `_elog_ts_epoch(iso_ts)` — convert ISO 8601 timestamp to Unix epoch
+- `_elog_fmt_gelf(type, level, msg, tag, extras, ts, host)` — build GELF 1.1 JSON
+- `_elog_out_gelf(line)` — GELF output handler (UDP/HTTP)
+- `_elog_ecs_category(event_type)` — map elog type to ECS event.category
+- `_elog_ecs_type(event_type)` — map elog type to ECS event.type
+- `_elog_fmt_elk(type, level, msg, tag, extras, ts, host)` — build ECS-aligned JSON
+- `_elog_out_elk_json(line)` — ELK JSON output handler (HTTP)
 
 ## Environment Variables
 
@@ -296,6 +310,13 @@ Internal functions (underscore prefix) are not part of the public API:
 | `ELOG_SYSLOG_UDP_FACILITY` | `1` | Syslog facility code (0-23; 1 = user) |
 | `ELOG_SYSLOG_UDP_FORMAT` | `5424` | Syslog format: `5424` or `3164` |
 | `ELOG_SYSLOG_UDP_PAYLOAD` | `classic` | Payload format: `classic`, `json`, or `cef` |
+| `ELOG_GELF_HOST` | *(empty)* | Graylog server (empty = no-op) |
+| `ELOG_GELF_PORT` | `12201` | Graylog input port |
+| `ELOG_GELF_TRANSPORT` | `udp` | GELF transport: `udp` or `http` |
+| `ELOG_GELF_FILE` | *(empty)* | GELF capture file for testing/debug |
+| `ELOG_ELK_URL` | *(empty)* | Elasticsearch ingest URL (empty = no-op) |
+| `ELOG_ELK_INDEX` | `elog-events` | Target Elasticsearch index name |
+| `ELOG_ELK_FILE` | *(empty)* | ELK capture file for testing/debug |
 
 ## Event Taxonomy
 
@@ -343,7 +364,7 @@ elog_init
 elog_output_enable "cef"
 
 elog_event "block_added" "warn" "blocked host" "src=203.0.113.42" "reason=SSH"
-# Output: CEF:0|R-fx Networks|myapp|1.1.0|block_added|blocked host|5|src=203.0.113.42 reason=SSH
+# Output: CEF:0|R-fx Networks|myapp|1.2.0|block_added|blocked host|5|src=203.0.113.42 reason=SSH
 ```
 
 The CEF module only receives `elog_event()` output (source=event). Regular
@@ -373,6 +394,65 @@ UDP delivery uses fire-and-forget background subshells. Transport is
 auto-detected: bash `/dev/udp` first, then `nc` fallback. If neither is
 available, the module stays registered but sends nothing.
 
+### GELF Output (Graylog Extended Log Format 1.1)
+
+Send structured events to Graylog via UDP or HTTP:
+
+```bash
+source /opt/myapp/lib/elog_lib.sh
+ELOG_APP="myapp"
+ELOG_GELF_HOST="graylog.example.com"
+ELOG_GELF_PORT="12201"
+ELOG_GELF_TRANSPORT="udp"    # or "http" for HTTP input
+elog_init
+elog_output_enable "gelf"
+
+elog_event "block_added" "warn" "blocked host" "src=203.0.113.42"
+# Output: {"version":"1.1","host":"srv1","short_message":"blocked host","timestamp":1741283445,"level":4,"_app":"myapp","_pid":1234,"_event_type":"block_added","_src":"203.0.113.42"}
+```
+
+GELF field mapping follows the GELF 1.1 specification: `short_message` truncated
+at 256 chars, `full_message` included when message exceeds 256 chars, `level`
+uses syslog severity scale, custom fields prefixed with underscore (`_app`,
+`_pid`, `_event_type`, `_tag`, plus extras). Timestamp is Unix epoch seconds.
+
+### ELK JSON Output (Elasticsearch ECS-Aligned)
+
+Send ECS-aligned JSON events to Elasticsearch via HTTP:
+
+```bash
+source /opt/myapp/lib/elog_lib.sh
+ELOG_APP="myapp"
+ELOG_ELK_URL="http://elasticsearch.example.com:9200"
+ELOG_ELK_INDEX="elog-events"
+elog_init
+elog_output_enable "elk_json"
+
+elog_event "block_added" "warn" "{sshd} blocked host" "ip=203.0.113.42"
+# Output: {"@timestamp":"2026-03-06T14:30:45-0500","log.level":"warn","message":"blocked host","event.kind":"event","event.category":"intrusion_detection","event.type":"denied","event.action":"block_added","host.name":"srv1","process.name":"myapp","process.pid":1234,"tags":["sshd"],"labels":{"ip":"203.0.113.42"}}
+```
+
+ECS field mapping:
+
+| ECS Field | Source | Notes |
+|-----------|--------|-------|
+| `@timestamp` | ISO 8601 from event | Native timestamp |
+| `log.level` | elog severity name | debug, info, warn, error, critical |
+| `message` | Event message | Full text |
+| `event.kind` | Fixed `"event"` | ECS event kind |
+| `event.category` | Mapped from elog taxonomy | intrusion_detection, configuration, network, notification, process |
+| `event.type` | Mapped from elog type | denied, allowed, change, start, end, error, info |
+| `event.action` | Raw elog event type | Unmodified type string |
+| `host.name` | Hostname | |
+| `process.name` | `$ELOG_APP` | |
+| `process.pid` | `$$` | |
+| `tags` | `{tag}` prefix | Array, only if tag present |
+| `labels` | key=value extras | Flat key-value object |
+
+HTTP delivery for both GELF and ELK uses fire-and-forget background subshells.
+Transport is auto-detected: `curl` first, then `wget` fallback. If neither is
+available, the module stays registered but sends nothing.
+
 ### Custom Output Modules
 
 Register additional output modules for other destinations:
@@ -388,7 +468,7 @@ elog_output_enable "custom"
 
 ## Testing
 
-Tests across 9 BATS files:
+Tests across 11 BATS files:
 
 | File | Coverage |
 |------|----------|
@@ -401,6 +481,8 @@ Tests across 9 BATS files:
 | `06-elog-compat.bats` | Backward compat, no-init drop-in |
 | `07-elog-cef.bats` | CEF output module, format, escaping, severity |
 | `08-elog-syslog-udp.bats` | Syslog UDP, RFC 5424/3164, PRI, payload formats |
+| `09-elog-gelf.bats` | GELF 1.1 output, fields, truncation, transport |
+| `10-elog-elk.bats` | ELK JSON, ECS mapping, labels, HTTP detection |
 
 ```bash
 make -C tests test              # Debian 12 (primary)

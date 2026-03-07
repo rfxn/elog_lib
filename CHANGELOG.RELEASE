@@ -1,16 +1,18 @@
-elog_lib v1.1.0 | Mar 06 2026:
+elog_lib v1.2.0 | Mar 06 2026:
+
+-- Bug Fixes --
+  [Fix] Trailing newline from here-string stripped in CEF, GELF, and ELK extras parsing
 
 -- New Features --
-  [New] CEF output module with ArcSight Common Event Format (v0) support
-  [New] CEF severity mapping (debug=1, info=3, warn=5, error=7, critical=10)
-  [New] CEF header and extension escaping (pipe, backslash, equals, newline)
-  [New] Syslog UDP output module with RFC 5424 and RFC 3164 format support
-  [New] Fire-and-forget UDP delivery via /dev/udp with nc fallback
-  [New] Syslog severity mapping and PRI calculation (facility * 8 + severity)
-  [New] Configurable syslog payload format (classic, json, cef)
-  [New] Event context staging for SIEM handler access to structured event data
-  [New] 27 new tests across 07-elog-cef.bats and 08-elog-syslog-udp.bats
-  [Fix] UDP detection probe in elog_init() now gated by elog_output_enabled
-      instead of _elog_output_find (probe only fires when module is enabled)
-  [Fix] CEF signatureId field now header-escaped for defensive correctness
-  [Change] Documented silent CEF-to-classic fallback in syslog_udp payload selection
+  [New] GELF output module with Graylog Extended Log Format 1.1 support
+  [New] GELF timestamp conversion to Unix epoch via _elog_ts_epoch()
+  [New] GELF short_message truncation at 256 chars with full_message for overflow
+  [New] GELF transport selection: UDP (reusing _elog_udp_send) or HTTP
+  [New] GELF custom fields with underscore prefix (_app, _pid, _event_type, _tag)
+  [New] ELK JSON output module with ECS (Elastic Common Schema) field alignment
+  [New] ECS category mapping from elog taxonomy (intrusion_detection, configuration,
+      network, notification, process)
+  [New] ECS event.type mapping (denied, allowed, change, start, end, error, info)
+  [New] HTTP delivery infrastructure with curl/wget auto-detection and fallback
+  [New] Fire-and-forget HTTP POST via background subshell (_elog_http_send)
+  [New] 30 new tests across 09-elog-gelf.bats and 10-elog-elk.bats

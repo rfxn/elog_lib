@@ -1,6 +1,21 @@
 elog_lib CHANGELOG
 ==================
 
+- v1.2.0 | Mar 06 2026:
+  [Fix] Trailing newline from here-string stripped in CEF, GELF, and ELK extras parsing
+  [New] GELF output module with Graylog Extended Log Format 1.1 support
+  [New] GELF timestamp conversion to Unix epoch via _elog_ts_epoch()
+  [New] GELF short_message truncation at 256 chars with full_message for overflow
+  [New] GELF transport selection: UDP (reusing _elog_udp_send) or HTTP
+  [New] GELF custom fields with underscore prefix (_app, _pid, _event_type, _tag)
+  [New] ELK JSON output module with ECS (Elastic Common Schema) field alignment
+  [New] ECS category mapping from elog taxonomy (intrusion_detection, configuration,
+      network, notification, process)
+  [New] ECS event.type mapping (denied, allowed, change, start, end, error, info)
+  [New] HTTP delivery infrastructure with curl/wget auto-detection and fallback
+  [New] Fire-and-forget HTTP POST via background subshell (_elog_http_send)
+  [New] 30 new tests across 09-elog-gelf.bats and 10-elog-elk.bats
+
 - v1.1.0 | Mar 06 2026:
   [New] CEF output module with ArcSight Common Event Format (v0) support
   [New] CEF severity mapping (debug=1, info=3, warn=5, error=7, critical=10)
