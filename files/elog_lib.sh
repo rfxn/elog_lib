@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# elog_lib.sh — Structured Event Logging Library 1.0.1
+# elog_lib.sh — Structured Event Logging Library 1.0.2
 ###
 # Copyright (C) 2002-2026 R-fx Networks <proj@rfxn.com>
 #                         Ryan MacDonald <ryan@rfxn.com>
@@ -29,7 +29,7 @@
 [[ -n "${_ELOG_LIB_LOADED:-}" ]] && return 0 2>/dev/null
 _ELOG_LIB_LOADED=1
 # shellcheck disable=SC2034 # version checked by consumers
-ELOG_LIB_VERSION="1.0.1"
+ELOG_LIB_VERSION="1.0.2"
 
 # --- Configuration variables (set by consumer before sourcing) ---
 # All use ${VAR:-default} — safe when sourced from inside functions (BATS).
@@ -173,7 +173,9 @@ elog_init() {
 	local _app="${ELOG_APP:-${0##*/}}"
 	local _log_dir="${ELOG_LOG_DIR:-/var/log/${_app}}"
 	local _log_file="${ELOG_LOG_FILE:-${_log_dir}/${_app}.log}"
-	local _audit_file="${ELOG_AUDIT_FILE:-${_log_dir}/audit.log}"
+	# Use ${VAR-default} (no colon) so consumers can set ELOG_AUDIT_FILE=""
+	# to disable audit logging — distinguishes unset from empty
+	local _audit_file="${ELOG_AUDIT_FILE-${_log_dir}/audit.log}"
 
 	# Export computed paths back to env for consumers
 	ELOG_LOG_DIR="$_log_dir"
@@ -192,6 +194,7 @@ elog_init() {
 	# Touch log files with correct permissions
 	local _f
 	for _f in "$_log_file" "$_audit_file"; do
+		[ -z "$_f" ] && continue  # skip empty paths (audit disabled)
 		if [ ! -f "$_f" ]; then
 			touch "$_f" 2>/dev/null || {
 				echo "elog_lib: failed to create log file: $_f" >&2
@@ -242,13 +245,17 @@ elog_logrotate_snippet() {
 	local _app="${ELOG_APP:-${0##*/}}"
 	local _log_dir="${ELOG_LOG_DIR:-/var/log/${_app}}"
 	local _log_file="${ELOG_LOG_FILE:-${_log_dir}/${_app}.log}"
-	local _audit_file="${ELOG_AUDIT_FILE:-${_log_dir}/audit.log}"
+	local _audit_file="${ELOG_AUDIT_FILE-${_log_dir}/audit.log}"
 	local _freq="${ELOG_ROTATE_FREQUENCY:-weekly}"
 	local _count="${ELOG_ROTATE_COUNT:-12}"
 	local _compress="${ELOG_ROTATE_COMPRESS:-compress}"
 
+	# Build file list — omit audit file when audit is disabled (empty path)
+	local _files="$_log_file"
+	[ -n "$_audit_file" ] && _files="${_files} ${_audit_file}"
+
 	cat <<-LOGROTATE
-	${_log_file} ${_audit_file} {
+	${_files} {
 	    ${_freq}
 	    rotate ${_count}
 	    ${_compress}
@@ -511,6 +518,7 @@ _elog_fmt_cef() {
 	fi
 
 	# Parse extras (space-separated key=value pairs from _ELOG_EVT_EXTRAS)
+	# Note: values containing spaces are not supported (space-delimited format)
 	if [ -n "$_extras" ]; then
 		local _pair _key _val _esc_val
 		# Use read loop over space-separated pairs
@@ -735,6 +743,7 @@ _elog_fmt_gelf() {
 	fi
 
 	# Parse extras — each key=value becomes _key custom field
+	# Note: values containing spaces are not supported (space-delimited format)
 	if [ -n "$_extras" ]; then
 		local _pair _key _val _esc_key _esc_val
 		while IFS= read -r -d ' ' _pair || [ -n "$_pair" ]; do
@@ -885,6 +894,7 @@ _elog_fmt_elk() {
 	fi
 
 	# Labels object from extras (flat key=value map)
+	# Note: values containing spaces are not supported (space-delimited format)
 	if [ -n "$_extras" ]; then
 		local _labels="" _pair _key _val _esc_key _esc_val
 		while IFS= read -r -d ' ' _pair || [ -n "$_pair" ]; do
@@ -1104,8 +1114,8 @@ elog() {
 		_ELOG_EVT_LEVEL=""
 	else
 		# No modules registered — direct write (pre-init / backward compat)
+		local _fmt="${ELOG_FORMAT:-classic}"
 		if [ -n "${ELOG_LOG_FILE:-}" ]; then
-			local _fmt="${ELOG_FORMAT:-classic}"
 			if [ "$_fmt" = "json" ]; then
 				echo "$_json_line" >> "$ELOG_LOG_FILE"
 			else
@@ -1113,7 +1123,6 @@ elog() {
 			fi
 		fi
 		if [ -n "${ELOG_SYSLOG_FILE:-}" ]; then
-			local _fmt="${ELOG_FORMAT:-classic}"
 			if [ "$_fmt" = "json" ]; then
 				echo "$_json_line" >> "$ELOG_SYSLOG_FILE"
 			else
@@ -1130,7 +1139,6 @@ elog() {
 				;;
 		esac
 		local _prefix="${ELOG_STDOUT_PREFIX:-full}"
-		local _fmt="${ELOG_FORMAT:-classic}"
 		case "$_prefix" in
 			full)
 				if [ "$_fmt" = "json" ]; then
@@ -1177,6 +1185,7 @@ elog_critical() { elog critical "$@"; }
 # - Severity filtering: _elog_level_num < ELOG_LEVEL → suppress, return 0
 # - Builds JSON envelope with mandatory fields: ts, host, app, pid, type, level, msg
 # - Extracts {tag} from message; parses remaining args as key=value extra fields
+# - Extra values must not contain spaces (space-delimited internal format)
 # - Does NOT increment _ELOG_WRITE_COUNT (audit log not subject to truncation)
 # - Returns 0 on success
 elog_event() {
@@ -1310,7 +1319,7 @@ elog_event() {
 # Register built-in output modules — consumers enable via elog_output_enable or elog_init()
 # file: app log, format follows ELOG_FORMAT, receives elog() output
 # audit_file: audit log, always JSONL, receives elog_event() output only
-# syslog_file: syslog echo, format follows ELOG_FORMAT, receives all output
+# syslog_file: syslog echo, format follows ELOG_FORMAT, receives elog() output (source=elog)
 # stdout: terminal, classic format with prefix modes, receives all output
 elog_output_register "file" "_elog_out_file" "classic" "elog"
 elog_output_register "audit_file" "_elog_out_audit" "json" "event"

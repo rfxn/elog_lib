@@ -1,7 +1,7 @@
 # elog_lib — Structured Event Logging for Bash
 
 [![CI](https://github.com/rfxn/elog_lib/actions/workflows/ci.yml/badge.svg)](https://github.com/rfxn/elog_lib/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/rfxn/elog_lib)
+[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](https://github.com/rfxn/elog_lib)
 [![Bash](https://img.shields.io/badge/bash-4.1%2B-green.svg)](https://www.gnu.org/software/bash/)
 [![License](https://img.shields.io/badge/license-GPL%20v2-orange.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 
@@ -206,7 +206,7 @@ and any custom modules registered with `source="event"` or `source="all"`.
 - `event_type` — event type name (see taxonomy below)
 - `severity` — `debug`, `info`, `warn`, `error`, `critical`
 - `message` — event description (may include `{tag}` prefix)
-- `key=val` — zero or more key=value pairs added to JSON envelope
+- `key=val` — zero or more key=value pairs added to JSON envelope (values must not contain spaces)
 
 **Returns:** 0 on success, 1 on empty type.
 

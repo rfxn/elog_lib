@@ -167,6 +167,38 @@ teardown() {
 	elog_output_enabled "audit_file"
 }
 
+@test "elog_init: empty ELOG_AUDIT_FILE disables audit log" {
+	local log_dir="$TEST_TMPDIR/log/noaudit"
+	ELOG_APP="noaudit"
+	ELOG_LOG_DIR="$log_dir"
+	ELOG_LOG_FILE="$log_dir/noaudit.log"
+	ELOG_AUDIT_FILE=""
+	elog_init
+	# audit_file module should NOT be enabled
+	! elog_output_enabled "audit_file"
+	# ELOG_AUDIT_FILE should remain empty (not substituted with default)
+	[ -z "$ELOG_AUDIT_FILE" ]
+	# No audit.log file should be created
+	[ ! -f "$log_dir/audit.log" ]
+	# App log should still work
+	[ -f "$log_dir/noaudit.log" ]
+}
+
+@test "elog_init: unset ELOG_AUDIT_FILE gets default path" {
+	local log_dir="$TEST_TMPDIR/log/defaultaudit"
+	ELOG_APP="defaultaudit"
+	ELOG_LOG_DIR="$log_dir"
+	ELOG_LOG_FILE="$log_dir/defaultaudit.log"
+	unset ELOG_AUDIT_FILE
+	elog_init
+	# Should get the default path
+	[ "$ELOG_AUDIT_FILE" = "$log_dir/audit.log" ]
+	# audit_file module should be enabled
+	elog_output_enabled "audit_file"
+	# File should exist
+	[ -f "$log_dir/audit.log" ]
+}
+
 @test "elog_init: auto-enables syslog_file when ELOG_SYSLOG_FILE set" {
 	local log_dir="$TEST_TMPDIR/log/syslogauto"
 	ELOG_APP="syslogauto"

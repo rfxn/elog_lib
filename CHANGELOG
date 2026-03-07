@@ -1,6 +1,18 @@
 elog_lib CHANGELOG
 ==================
 
+- v1.0.2 | Mar 07 2026:
+  [Fix] ELOG_AUDIT_FILE expansion in elog_init() changed from ${:-} to ${-}
+      so consumers can set ELOG_AUDIT_FILE="" to disable audit logging
+  [Fix] elog_logrotate_snippet() respects empty ELOG_AUDIT_FILE (omits from
+      rotation config when audit is disabled)
+  [Fix] Redundant local _fmt declarations in elog() backward-compat block
+      consolidated to single declaration at block top
+  [Fix] Comment on syslog_file module registration corrected from
+      "receives all output" to "receives elog() output (source=elog)"
+  [Change] SIEM extras space-delimiter limitation documented in elog_event()
+      API comment, README, and at each SIEM parsing site (CEF, GELF, ELK)
+
 - v1.0.1 | Mar 07 2026:
   [New] CEF output module with ArcSight Common Event Format (v0) support
   [New] CEF severity mapping (debug=1, info=3, warn=5, error=7, critical=10)
