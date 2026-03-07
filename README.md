@@ -89,6 +89,356 @@ When `elog_init()` is not called, the library auto-enables output modules on
 first use. This supports BFD's drop-in pattern where `ELOG_LOG_FILE` is set
 and changed dynamically between calls.
 
+## Integration Guide
+
+Step-by-step guide for embedding elog_lib into a consuming project.
+
+### Step 1: Copy the library
+
+Copy `files/elog_lib.sh` into your project's internal library directory:
+
+```bash
+cp elog_lib/files/elog_lib.sh /path/to/myproject/files/internals/elog_lib.sh
+chown root:root /path/to/myproject/files/internals/elog_lib.sh
+chmod 640 /path/to/myproject/files/internals/elog_lib.sh
+```
+
+### Step 2: Source the library
+
+Source elog_lib early in your startup chain, after path discovery but before
+any logging calls:
+
+```bash
+# In internals.conf or equivalent
+# shellcheck disable=SC1090,SC1091
+. "$INSTALL_PATH/internals/elog_lib.sh"
+```
+
+### Step 3: Map project config to ELOG_* variables
+
+Set `ELOG_*` environment variables from your project's own config names.
+This mapping belongs in your `internals.conf` or config-loading code, after
+your user config is sourced:
+
+```bash
+ELOG_APP="myproject"
+ELOG_LOG_DIR="/var/log/myproject"
+ELOG_LOG_FILE="${LOG_FILE:-/var/log/myproject/myproject.log}"
+ELOG_AUDIT_FILE="${ELOG_LOG_DIR}/audit.log"
+ELOG_FORMAT="${LOG_FORMAT:-classic}"
+ELOG_LEVEL="${LOG_LEVEL:-1}"
+ELOG_STDOUT="${STDOUT_MODE:-always}"
+ELOG_STDOUT_PREFIX="short"
+```
+
+### Step 4: Call elog_init()
+
+Call `elog_init()` once during startup, after all `ELOG_*` variables are set.
+Place it in your main entry point or config initialization function:
+
+```bash
+if ! elog_init; then
+    echo "warning: elog_init failed; structured logging may be unavailable" >&2
+fi
+```
+
+### Step 5: Enable stdout (CRITICAL)
+
+**`elog_init()` does NOT enable stdout output.** This is intentional for daemons
+that should not write to the terminal after initialization. If your project
+needs stdout output (most CLI tools and interactive scripts do), you must
+enable it explicitly:
+
+```bash
+# MUST be called after elog_init() if you need terminal output
+elog_output_enable "stdout" 2>/dev/null || true
+```
+
+Without this call, `elog()` writes to log files and syslog but produces no
+terminal output. This is the most common integration pitfall.
+
+### When to use elog() vs elog_event()
+
+| Function | Purpose | Output targets | Format |
+|----------|---------|----------------|--------|
+| `elog()` | Operational messages (status, warnings, errors) | file, syslog_file, stdout, syslog_udp | classic or JSON |
+| `elog_event()` | Structured events for audit trail and SIEM | audit_file, stdout, cef, syslog_udp, gelf, elk_json | always JSONL (audit) |
+
+**Decision rule:** Use `elog()` for human-readable operational output (what a
+sysadmin reads in the terminal or log file). Use `elog_event()` for
+machine-parseable events that feed audit logs, dashboards, or SIEM pipelines.
+Many call sites use both: `elog()` for the operator, `elog_event()` for the
+audit trail.
+
+### Consumer integration patterns
+
+**BFD** (brute force detection) maps its config in the main `bfd` script's
+`config_init()` block. ELOG_* variables are derived from `conf.bfd` values
+(`BFD_LOG_PATH` to `ELOG_LOG_FILE`, `LOG_FORMAT` to `ELOG_FORMAT`). BFD calls
+`elog_init()` then explicitly enables `syslog_file` and `stdout` modules.
+Events: `block_added`, `block_removed`, `config_loaded`, `service_state`.
+
+**LMD** (malware scanner) uses a dedicated `_lmd_elog_init()` wrapper that maps
+LMD-specific variables (`$maldet_log`, `$logdir`) to ELOG_* equivalents. The
+wrapper is called from `prerun()` and again on monitor config reload. LMD
+disables audit logging for non-root users. Events: `scan_started`,
+`scan_completed`, `threat_detected`, `quarantine_added`, `file_cleaned`.
+
+**APF** (firewall) sets ELOG_* variables in `internals.conf` (shared between
+`files/apf` and `files/firewall`). APF maps its `SET_VERBOSE` config to
+`ELOG_STDOUT` (`1` = `"always"`, else `"flag"`). The main `apf` script calls
+`elog_init()` then enables stdout. Events: `config_loaded`, `service_state`,
+`rule_loaded`.
+
+## Configuration Profiles
+
+Pre-built environment variable blocks for common deployment scenarios.
+
+### Development
+
+Verbose output with debug messages on stdout. Good for interactive testing.
+
+```bash
+ELOG_APP="myapp"
+ELOG_LOG_DIR="/var/log/myapp"
+ELOG_LEVEL="0"            # show debug messages
+ELOG_VERBOSE="1"          # debug to stdout
+ELOG_FORMAT="classic"     # human-readable
+ELOG_STDOUT="always"      # always show terminal output
+ELOG_STDOUT_PREFIX="full" # full timestamp in terminal
+ELOG_LOG_MAX_LINES="5000" # aggressive truncation for dev
+```
+
+### Production daemon
+
+File and audit logging with syslog, no terminal output. Typical for
+long-running services managed by systemd or init.
+
+```bash
+ELOG_APP="myapp"
+ELOG_LOG_DIR="/var/log/myapp"
+ELOG_LEVEL="1"                              # info and above
+ELOG_FORMAT="classic"                       # human-readable log files
+ELOG_STDOUT="never"                         # no terminal output
+ELOG_SYSLOG_FILE="/var/log/syslog"          # echo to syslog
+ELOG_LOG_MAX_LINES="50000"                  # rotate at 50K lines
+ELOG_ROTATE_FREQUENCY="daily"               # logrotate daily
+```
+
+### SIEM integration
+
+All SIEM modules enabled, JSON format, events forwarded to central collectors.
+
+```bash
+ELOG_APP="myapp"
+ELOG_LOG_DIR="/var/log/myapp"
+ELOG_FORMAT="json"                          # JSON log files
+ELOG_CEF_FILE="/var/log/myapp/cef.log"      # CEF for ArcSight
+ELOG_SYSLOG_UDP_HOST="syslog.example.com"   # remote syslog
+ELOG_SYSLOG_UDP_FORMAT="5424"               # RFC 5424
+ELOG_GELF_HOST="graylog.example.com"        # Graylog input
+ELOG_ELK_URL="http://elk.example.com:9200"  # Elasticsearch
+ELOG_ELK_INDEX="security-events"            # custom index name
+```
+
+After `elog_init()`, enable each SIEM module:
+
+```bash
+elog_output_enable "cef"
+elog_output_enable "syslog_udp"
+elog_output_enable "gelf"
+elog_output_enable "elk_json"
+```
+
+### Monitoring-only (Graylog)
+
+Send structured events to Graylog with no local file logging. Useful for
+ephemeral containers or systems with centralized log management.
+
+```bash
+ELOG_APP="myapp"
+ELOG_LOG_DIR="/tmp"                         # unused but must be writable
+ELOG_LOG_FILE="/dev/null"                   # discard local app log
+ELOG_AUDIT_FILE=""                          # disable audit file
+ELOG_GELF_HOST="graylog.example.com"       # Graylog server
+ELOG_GELF_PORT="12201"                     # GELF input port
+ELOG_GELF_TRANSPORT="http"                 # HTTP input (more reliable)
+ELOG_STDOUT="never"                        # no terminal output
+```
+
+## Use Cases
+
+### Firewall event logging (APF pattern)
+
+Log firewall lifecycle events and trust chain changes:
+
+```bash
+source "$INSTALL_PATH/internals/elog_lib.sh"
+ELOG_APP="myfw"
+ELOG_LOG_DIR="/var/log/myfw"
+elog_init
+elog_output_enable "stdout" 2>/dev/null || true
+
+elog_event "config_loaded" "info" "firewall configuration loaded" "rules=148"
+elog_event "rule_loaded" "info" "{trust} allow chains loaded" "count=24"
+elog_event "service_state" "info" "firewall started"
+elog info "firewall startup complete"
+
+# On block/unblock
+elog_event "block_added" "warn" "{deny} host blocked" "ip=198.51.100.5" "reason=manual"
+elog_event "block_removed" "info" "{deny} host unblocked" "ip=198.51.100.5"
+```
+
+### Intrusion detection (BFD pattern)
+
+Log brute force detection, banning, and service state:
+
+```bash
+source "$INSTALL_PATH/internals/elog_lib.sh"
+ELOG_APP="ids"
+ELOG_LOG_DIR="/var/log/ids"
+elog_init
+elog_output_enable "stdout" 2>/dev/null || true
+
+elog_event "scan_started" "info" "{sshd} scanning auth log" "mode=watch"
+elog_event "threshold_exceeded" "warn" "{sshd} brute force detected" \
+    "ip=203.0.113.42" "count=15" "threshold=10"
+elog_event "block_added" "warn" "{sshd} banned host" \
+    "ip=203.0.113.42" "duration=3600" "rule=sshd"
+elog_event "block_removed" "info" "{sshd} ban expired" "ip=203.0.113.42"
+```
+
+### Malware scanner (LMD pattern)
+
+Log scan lifecycle, detections, and quarantine actions:
+
+```bash
+source "$INSTALL_PATH/internals/elog_lib.sh"
+ELOG_APP="scanner"
+ELOG_LOG_DIR="/var/log/scanner"
+ELOG_STDOUT="flag"
+elog_init
+elog_output_enable "stdout" 2>/dev/null || true
+
+elog_event "scan_started" "info" "scan started" "path=/var/www" "mode=manual"
+elog_event "threat_detected" "warn" "malware found" \
+    "file=/var/www/shell.php" "sig=php.backdoor.webshell.1"
+elog_event "quarantine_added" "warn" "file quarantined" \
+    "file=/var/www/shell.php" "sig=php.backdoor.webshell.1"
+elog_event "scan_completed" "info" "scan finished" \
+    "files=1234" "hits=1" "cleaned=0" "time=42s"
+```
+
+### SIEM forwarding
+
+Send events to SIEM platforms with format-appropriate output:
+
+```bash
+# CEF to ArcSight
+ELOG_CEF_FILE="/var/log/myapp/cef.log"
+elog_output_enable "cef"
+elog_event "block_added" "warn" "blocked host" "src=203.0.113.42"
+# Output: CEF:0|R-fx Networks|myapp|1.0.2|block_added|blocked host|5|src=203.0.113.42
+
+# GELF to Graylog
+ELOG_GELF_HOST="graylog.example.com"
+elog_output_enable "gelf"
+elog_event "threat_detected" "warn" "malware found" "file=/tmp/evil.php"
+# Sends: {"version":"1.1","host":"srv1","short_message":"malware found",...}
+
+# ECS JSON to Kibana/Elasticsearch
+ELOG_ELK_URL="http://elk.example.com:9200"
+elog_output_enable "elk_json"
+elog_event "scan_completed" "info" "scan finished" "hits=3" "files=500"
+# Sends: {"@timestamp":"...","event.action":"scan_completed","event.category":"intrusion_detection",...}
+```
+
+## Troubleshooting
+
+### No stdout output
+
+**Symptom:** `elog()` writes to log files but nothing appears on the terminal.
+
+**Cause:** `elog_init()` enables `file`, `audit_file`, and `syslog_file` modules
+but does NOT enable `stdout`. This is intentional for daemon-mode consumers.
+
+**Fix:** Call `elog_output_enable "stdout"` after `elog_init()`:
+
+```bash
+elog_init
+elog_output_enable "stdout" 2>/dev/null || true
+```
+
+### Log files not created
+
+**Symptom:** No log files appear in `ELOG_LOG_DIR`.
+
+**Cause:** The process does not have write permission to create the log
+directory or files.
+
+**Fix:** Ensure the log directory exists and is writable by the running user.
+`elog_init()` calls `mkdir -p` on `ELOG_LOG_DIR` but cannot create directories
+where the parent path is not writable. Check with:
+
+```bash
+ls -la "$(dirname "$ELOG_LOG_DIR")"
+```
+
+### SIEM messages not arriving
+
+**Symptom:** SIEM modules are enabled but the remote collector receives nothing.
+
+**Cause:** UDP transport requires `/dev/udp` (bash built-in) or `nc`/`ncat`.
+HTTP transport requires `curl` or `wget`. If none are available, the module
+silently drops messages.
+
+**Fix:** Verify transport availability and network connectivity:
+
+```bash
+# Check UDP transport
+echo test > /dev/udp/127.0.0.1/514 2>/dev/null && echo "bash /dev/udp works" || echo "no /dev/udp"
+command -v nc && echo "nc available" || echo "nc not found"
+
+# Check HTTP transport
+command -v curl && echo "curl available" || echo "curl not found"
+command -v wget && echo "wget available" || echo "wget not found"
+```
+
+### Audit log missing
+
+**Symptom:** Application log exists but `audit.log` is not created.
+
+**Cause:** `ELOG_AUDIT_FILE` must be set with `${ELOG_AUDIT_FILE-...}` expansion
+(not `${ELOG_AUDIT_FILE:-...}`). If your code uses `:-`, an empty string
+disables audit logging. If audit logging was disabled intentionally by setting
+`ELOG_AUDIT_FILE=""`, this is expected behavior.
+
+**Fix:** Verify the variable is set to a non-empty path:
+
+```bash
+echo "ELOG_AUDIT_FILE=${ELOG_AUDIT_FILE}"
+```
+
+### Log file growing too large
+
+**Symptom:** Application log grows unbounded and consumes disk space.
+
+**Cause:** `ELOG_LOG_MAX_LINES` defaults to `0` (truncation disabled).
+
+**Fix:** Set `ELOG_LOG_MAX_LINES` to a reasonable cap. Truncation is
+inode-preserving (uses tail + cat), safe for consumers using `tail -f` or
+`inotifywait`:
+
+```bash
+ELOG_LOG_MAX_LINES="50000"  # truncate to last 50K lines
+```
+
+Additionally, use `elog_logrotate_snippet()` to generate a logrotate config:
+
+```bash
+elog_logrotate_snippet > /etc/logrotate.d/myapp
+```
+
 ## Architecture
 
 ### Dual Log Model
