@@ -1,23 +1,8 @@
-elog_lib v1.0.2 | Mar 07 2026:
+- v1.0.2 | Mar 07 2026:
 
--- Bug Fixes --
   [Fix] ELOG_AUDIT_FILE expansion in elog_init() changed from ${:-} to ${-}
       so consumers can set ELOG_AUDIT_FILE="" to disable audit logging
   [Fix] elog_logrotate_snippet() respects empty ELOG_AUDIT_FILE (omits from
       rotation config when audit is disabled)
-  [Fix] Redundant local _fmt declarations in elog() backward-compat block
-      consolidated to single declaration at block top
-  [Fix] Comment on syslog_file module registration corrected from
-      "receives all output" to "receives elog() output (source=elog)"
-
--- Documentation --
-  [Change] SIEM extras space-delimiter limitation documented in elog_event()
-      API comment, README, and at each SIEM parsing site (CEF, GELF, ELK)
-  [New] Integration guide section in README with step-by-step embedding,
-      elog() vs elog_event() decision tree, and consumer patterns (BFD/LMD/APF)
-  [New] Configuration profiles section in README (development, production
-      daemon, SIEM integration, monitoring-only)
-  [New] Use cases section in README with real code snippets for firewall,
-      intrusion detection, malware scanning, and SIEM forwarding
-  [New] Troubleshooting section in README covering stdout, log files, SIEM
-      delivery, audit log, and log growth issues
+  [New] README: integration guide, configuration profiles, use cases, and
+      troubleshooting sections
