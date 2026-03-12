@@ -1,3 +1,10 @@
+- v1.0.3 | Mar 11 2026:
+
+  [Fix] host field in all JSON output (elog_log, elog_event, syslog UDP) now
+      uses FQDN via hostname -f with fallback to short name, then bare hostname;
+      aligns with RFC 5424 HOSTNAME field recommendation and improves host
+      disambiguation in multi-domain log aggregation environments
+
 - v1.0.2 | Mar 07 2026:
 
   [Fix] ELOG_AUDIT_FILE expansion in elog_init() changed from ${:-} to ${-}
