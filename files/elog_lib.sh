@@ -128,7 +128,7 @@ _elog_level_name() {
 }
 
 # _elog_json_escape(str) — escape string for safe JSON embedding
-# Handles: backslash, double-quote, newline, tab, carriage return
+# Handles: backslash, double-quote, newline, tab, carriage return, backspace, form feed
 _elog_json_escape() {
 	local s="$1"
 	s="${s//\\/\\\\}"
@@ -136,6 +136,8 @@ _elog_json_escape() {
 	s="${s//$'\n'/\\n}"
 	s="${s//$'\t'/\\t}"
 	s="${s//$'\r'/\\r}"
+	s="${s//$'\x08'/\\b}"
+	s="${s//$'\x0c'/\\f}"
 	echo "$s"
 }
 
@@ -302,6 +304,8 @@ _elog_auto_enable() {
 	if [ -n "${ELOG_LOG_FILE:-}" ] && ! elog_output_enabled "file"; then
 		elog_output_enable "file" 2>/dev/null || true  # safe: module may not be registered yet
 	fi
+	# Note: ${:-} here is correct — treats both unset and empty as "disabled"
+	# (matches the enable-gate intent, complementing ${-} default at init)
 	if [ -n "${ELOG_AUDIT_FILE:-}" ] && ! elog_output_enabled "audit_file"; then
 		elog_output_enable "audit_file" 2>/dev/null || true  # safe: module may not be registered yet
 	fi
@@ -529,6 +533,8 @@ _elog_fmt_cef() {
 			[ "$_key" = "$_pair" ] && continue  # no = found
 			[ -z "$_key" ] && continue
 			_esc_val=$(_elog_cef_escape_ext "$_val")
+			_key="${_key//[= $'\n']/}"  # strip characters illegal in CEF extension keys
+			[ -z "$_key" ] && continue
 			if [ -n "$_ext" ]; then
 				_ext="${_ext} ${_key}=${_esc_val}"
 			else
@@ -1090,12 +1096,16 @@ elog() {
 		_json_msg="$_msg"
 	fi
 	_esc_msg=$(_elog_json_escape "$_json_msg")
+	local _esc_host _esc_app _esc_level
+	_esc_host=$(_elog_json_escape "$_host")
+	_esc_app=$(_elog_json_escape "$_app")
+	_esc_level=$(_elog_json_escape "$_level")
 	_iso_ts=$(date +"%Y-%m-%dT%H:%M:%S%z")
 	if [ -n "$_tag" ]; then
 		_esc_tag=$(_elog_json_escape "$_tag")
-		_json_line="{\"ts\":\"${_iso_ts}\",\"host\":\"${_host}\",\"app\":\"${_app}\",\"pid\":${_pid},\"level\":\"${_level}\",\"tag\":\"${_esc_tag}\",\"msg\":\"${_esc_msg}\"}"
+		_json_line="{\"ts\":\"${_iso_ts}\",\"host\":\"${_esc_host}\",\"app\":\"${_esc_app}\",\"pid\":${_pid},\"level\":\"${_esc_level}\",\"tag\":\"${_esc_tag}\",\"msg\":\"${_esc_msg}\"}"
 	else
-		_json_line="{\"ts\":\"${_iso_ts}\",\"host\":\"${_host}\",\"app\":\"${_app}\",\"pid\":${_pid},\"level\":\"${_level}\",\"msg\":\"${_esc_msg}\"}"
+		_json_line="{\"ts\":\"${_iso_ts}\",\"host\":\"${_esc_host}\",\"app\":\"${_esc_app}\",\"pid\":${_pid},\"level\":\"${_esc_level}\",\"msg\":\"${_esc_msg}\"}"
 	fi
 
 	# Use dispatch if any modules are registered, else direct write (backward compat)
@@ -1231,6 +1241,10 @@ elog_event() {
 	local _esc_msg _esc_type _iso_ts
 	_esc_msg=$(_elog_json_escape "$_json_msg")
 	_esc_type=$(_elog_json_escape "$_type")
+	local _esc_host _esc_app _esc_level
+	_esc_host=$(_elog_json_escape "$_host")
+	_esc_app=$(_elog_json_escape "$_app")
+	_esc_level=$(_elog_json_escape "$_level")
 	_iso_ts=$(date +"%Y-%m-%dT%H:%M:%S%z")
 
 	# Parse key=value extra fields from remaining args
@@ -1255,7 +1269,7 @@ elog_event() {
 
 	# Build JSON envelope
 	local _json_line
-	_json_line="{\"ts\":\"${_iso_ts}\",\"host\":\"${_host}\",\"app\":\"${_app}\",\"pid\":${_pid},\"type\":\"${_esc_type}\",\"level\":\"${_level}\",\"msg\":\"${_esc_msg}\""
+	_json_line="{\"ts\":\"${_iso_ts}\",\"host\":\"${_esc_host}\",\"app\":\"${_esc_app}\",\"pid\":${_pid},\"type\":\"${_esc_type}\",\"level\":\"${_esc_level}\",\"msg\":\"${_esc_msg}\""
 	if [ -n "$_tag" ]; then
 		local _esc_tag
 		_esc_tag=$(_elog_json_escape "$_tag")
