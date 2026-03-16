@@ -1,15 +1,18 @@
-- v1.0.3 | Mar 11 2026:
+- v1.0.4 | Mar 16 2026:
 
-  [Fix] host field in all JSON output (elog_log, elog_event, syslog UDP) now
-      uses FQDN via hostname -f with fallback to short name, then bare hostname;
-      aligns with RFC 5424 HOSTNAME field recommendation and improves host
-      disambiguation in multi-domain log aggregation environments
-
-- v1.0.2 | Mar 07 2026:
-
-  [Fix] ELOG_AUDIT_FILE expansion in elog_init() changed from ${:-} to ${-}
-      so consumers can set ELOG_AUDIT_FILE="" to disable audit logging
-  [Fix] elog_logrotate_snippet() respects empty ELOG_AUDIT_FILE (omits from
-      rotation config when audit is disabled)
-  [New] README: integration guide, configuration profiles, use cases, and
-      troubleshooting sections
+  [Fix] JSON-escape _host, _app, _level in elog() and elog_event() JSON output;
+      matches defensive pattern already used by GELF and ELK formatters
+  [Fix] _elog_json_escape() now handles \b (backspace) and \f (form feed) per RFC 8259
+  [Fix] CEF extension key names sanitized to prevent structure corruption
+  [Fix] Bare rm in _elog_truncate_check() changed to command rm per alias-safety convention
+  [Fix] elog_init() sets umask 027 during file/directory creation, restores on all paths
+  [Fix] Temp file cleanup trap in _elog_truncate_check() for signal safety
+  [Fix] Legacy symlink creation simplified to avoid TOCTOU race
+  [Fix] Version header comment synced with ELOG_LIB_VERSION
+  [Change] Internal helpers converted from echo-return to result-variable pattern,
+      eliminating ~70% of per-call subshell fork overhead
+  [Change] Hostname cached at first use; eliminates repeated fork+exec across 3 call sites
+  [Change] Timestamps computed from single date invocation (was 2 per call)
+  [Change] SIEM module gating uses O(1) cached index lookup (was O(n) linear scan)
+  [Change] Shared _elog_parse_extras() replaces 3x copy-paste parsing loop
+  [Change] Unreachable 42-line direct-write fallback removed from elog()
