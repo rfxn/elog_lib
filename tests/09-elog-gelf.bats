@@ -175,16 +175,14 @@ teardown() {
 
 # --- GELF transport selection ---
 
-@test "GELF: transport selection (udp vs http)" {
+@test "GELF: transport defaults to udp" {
 	elog_output_enable "gelf"
-	# Verify UDP is the default transport
-	local transport="${ELOG_GELF_TRANSPORT:-udp}"
-	[ "$transport" = "udp" ]
-
-	# Test that http transport setting is accepted
+	[ "${ELOG_GELF_TRANSPORT:-udp}" = "udp" ]
+	# Verify HTTP transport is selectable and events still reach capture file
 	ELOG_GELF_TRANSPORT="http"
-	# Just verify the setting propagates (actual HTTP send requires a server)
-	[ "$ELOG_GELF_TRANSPORT" = "http" ]
+	: > "$ELOG_GELF_FILE"
+	elog_event "block_added" "warn" "test transport" > /dev/null
+	[ "$(wc -l < "$ELOG_GELF_FILE")" -ge 1 ]
 }
 
 # --- GELF JSON escaping ---

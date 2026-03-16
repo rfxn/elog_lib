@@ -213,10 +213,16 @@ elog_init() {
 	ELOG_LOG_FILE="$_log_file"
 	ELOG_AUDIT_FILE="$_audit_file"
 
+	# Restrictive umask during file creation (restore after)
+	local _old_umask
+	_old_umask=$(umask)
+	umask 027
+
 	# Create log directory
 	if [ ! -d "$_log_dir" ]; then
 		if ! mkdir -p "$_log_dir" 2>/dev/null; then  # suppress permission errors; failure handled below
 			echo "elog_lib: failed to create log directory: $_log_dir" >&2
+			umask "$_old_umask"
 			return 1
 		fi
 		chmod 750 "$_log_dir"
@@ -229,15 +235,19 @@ elog_init() {
 		if [ ! -f "$_f" ]; then
 			touch "$_f" 2>/dev/null || {  # suppress permission errors; failure handled in || block
 				echo "elog_lib: failed to create log file: $_f" >&2
+				umask "$_old_umask"
 				return 1
 			}
 			chmod 640 "$_f"
 		fi
 	done
 
-	# Legacy symlink
+	umask "$_old_umask"
+
+	# Create legacy symlink; skip if regular file exists to avoid
+	# replacing a file the consumer may be actively writing to
 	if [ -n "${ELOG_LEGACY_LOG:-}" ]; then
-		if [ ! -e "$ELOG_LEGACY_LOG" ] && [ ! -L "$ELOG_LEGACY_LOG" ]; then
+		if [ ! -f "$ELOG_LEGACY_LOG" ]; then
 			ln -sf "$_log_file" "$ELOG_LEGACY_LOG" 2>/dev/null || true  # safe: legacy symlink is optional
 		fi
 	fi
@@ -319,9 +329,12 @@ _elog_truncate_check() {
 	if [ "$_count" -gt "$_max" ]; then
 		local _tmpf
 		_tmpf=$(mktemp "${_file}.XXXXXX") || return 0
+		# shellcheck disable=SC2064
+		trap "command rm -f '$_tmpf'" HUP TERM INT
 		tail -n "$_max" "$_file" > "$_tmpf"
 		cat "$_tmpf" > "$_file"
 		command rm -f "$_tmpf"
+		trap - HUP TERM INT
 	fi
 }
 

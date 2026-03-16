@@ -228,17 +228,9 @@ teardown() {
 
 # --- HTTP method detection ---
 
-@test "ELK: HTTP method detection (curl)" {
+@test "ELK: HTTP method detection" {
 	_ELOG_HTTP_METHOD=""
 	_elog_http_detect
-	# Should detect curl (present in all test containers)
 	[[ "$_ELOG_HTTP_METHOD" == "curl" || "$_ELOG_HTTP_METHOD" == "wget" || "$_ELOG_HTTP_METHOD" == "none" ]]
 	[ -n "$_ELOG_HTTP_METHOD" ]
-}
-
-@test "ELK: HTTP method detection sets variable" {
-	_ELOG_HTTP_METHOD=""
-	_elog_http_detect
-	# Should set to curl, wget, or none
-	[[ "$_ELOG_HTTP_METHOD" == "curl" || "$_ELOG_HTTP_METHOD" == "wget" || "$_ELOG_HTTP_METHOD" == "none" ]]
 }
