@@ -159,36 +159,25 @@ teardown() {
 	grep -q "syslog dispatch test" "$syslog"
 }
 
-# --- Backward compatibility (no modules / direct write fallback) ---
+# --- Module registry invariant ---
 
-@test "elog: direct write fallback when all modules disabled" {
-	: > "$ELOG_LOG_FILE"
-	# Disable all modules
-	local i
-	for i in "${!_ELOG_OUTPUT_NAMES[@]}"; do
-		_ELOG_OUTPUT_ENABLED[$i]=0
+@test "elog: 8 built-in modules always registered after source" {
+	# Verify the invariant that modules are always present — direct-write
+	# fallback was removed; dispatch is the only code path
+	[ "${#_ELOG_OUTPUT_NAMES[@]}" -eq 8 ]
+	# Verify known module names
+	local _found_file=0 _found_audit=0 _found_stdout=0
+	local _i
+	for _i in "${!_ELOG_OUTPUT_NAMES[@]}"; do
+		case "${_ELOG_OUTPUT_NAMES[$_i]}" in
+			file)       _found_file=1 ;;
+			audit_file) _found_audit=1 ;;
+			stdout)     _found_stdout=1 ;;
+		esac
 	done
-	# Clear names to trigger direct-write path
-	local saved_names=("${_ELOG_OUTPUT_NAMES[@]}")
-	local saved_handlers=("${_ELOG_OUTPUT_HANDLERS[@]}")
-	local saved_enabled=("${_ELOG_OUTPUT_ENABLED[@]}")
-	local saved_formats=("${_ELOG_OUTPUT_FORMATS[@]}")
-	local saved_sources=("${_ELOG_OUTPUT_SOURCES[@]}")
-	_ELOG_OUTPUT_NAMES=()
-	_ELOG_OUTPUT_HANDLERS=()
-	_ELOG_OUTPUT_ENABLED=()
-	_ELOG_OUTPUT_FORMATS=()
-	_ELOG_OUTPUT_SOURCES=()
-
-	elog info "direct write" > /dev/null
-	grep -q "direct write" "$ELOG_LOG_FILE"
-
-	# Restore
-	_ELOG_OUTPUT_NAMES=("${saved_names[@]}")
-	_ELOG_OUTPUT_HANDLERS=("${saved_handlers[@]}")
-	_ELOG_OUTPUT_ENABLED=("${saved_enabled[@]}")
-	_ELOG_OUTPUT_FORMATS=("${saved_formats[@]}")
-	_ELOG_OUTPUT_SOURCES=("${saved_sources[@]}")
+	[ "$_found_file" -eq 1 ]
+	[ "$_found_audit" -eq 1 ]
+	[ "$_found_stdout" -eq 1 ]
 }
 
 # --- Multiple modules ---

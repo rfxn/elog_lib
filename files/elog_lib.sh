@@ -144,6 +144,23 @@ _elog_json_escape() {
 	_ELOG_RET="${_ELOG_RET//$'\x0c'/\\f}"
 }
 
+# _elog_parse_extras(extras, callback_fn) — parse space-delimited key=value pairs
+# Calls callback_fn with (key, val) for each valid pair.
+# Strips trailing newlines from here-string, skips pairs without = or empty keys.
+_elog_parse_extras() {
+	local _extras="$1" _callback="$2"
+	[ -z "$_extras" ] && return 0
+	local _pair _key _val
+	while IFS= read -r -d ' ' _pair || [ -n "$_pair" ]; do
+		_key="${_pair%%=*}"
+		_val="${_pair#*=}"
+		_val="${_val%$'\n'}"  # strip trailing newline from here-string
+		[ "$_key" = "$_pair" ] && continue  # no = found
+		[ -z "$_key" ] && continue
+		"$_callback" "$_key" "$_val"
+	done <<< "$_extras"
+}
+
 # _elog_extract_tag(msg) — extract {tag} prefix from message
 # Returns the tag name (without braces), or empty if no tag found
 _elog_extract_tag() {
@@ -543,28 +560,21 @@ _elog_fmt_cef() {
 		_ext="tag=${_esc_tag}"
 	fi
 
-	# Parse extras (space-separated key=value pairs from _ELOG_EVT_EXTRAS)
-	# Note: values containing spaces are not supported (space-delimited format)
-	if [ -n "$_extras" ]; then
-		local _pair _key _val _esc_val
-		# Use read loop over space-separated pairs
-		while IFS= read -r -d ' ' _pair || [ -n "$_pair" ]; do
-			_key="${_pair%%=*}"
-			_val="${_pair#*=}"
-			_val="${_val%$'\n'}"  # strip trailing newline from here-string
-			[ "$_key" = "$_pair" ] && continue  # no = found
-			[ -z "$_key" ] && continue
-			_elog_cef_escape_ext "$_val"
-			_esc_val="$_ELOG_RET"
-			_key="${_key//[= $'\n']/}"  # strip characters illegal in CEF extension keys
-			[ -z "$_key" ] && continue
-			if [ -n "$_ext" ]; then
-				_ext="${_ext} ${_key}=${_esc_val}"
-			else
-				_ext="${_key}=${_esc_val}"
-			fi
-		done <<< "$_extras"
-	fi
+	# Parse extras via shared helper — callback accesses _ext from parent scope
+	# shellcheck disable=SC2317  # invoked indirectly via _elog_parse_extras
+	_cef_extra_cb() {
+		local _key="$1" _val="$2"
+		_elog_cef_escape_ext "$_val"
+		local _esc_val="$_ELOG_RET"
+		_key="${_key//[= $'\n']/}"  # strip characters illegal in CEF extension keys
+		[ -z "$_key" ] && return 0
+		if [ -n "$_ext" ]; then
+			_ext="${_ext} ${_key}=${_esc_val}"
+		else
+			_ext="${_key}=${_esc_val}"
+		fi
+	}
+	_elog_parse_extras "$_extras" "_cef_extra_cb"
 
 	echo "CEF:0|${_vendor}|${_product}|${_version}|${_sig_id}|${_name}|${_sev}|${_ext}"
 }
@@ -782,23 +792,17 @@ _elog_fmt_gelf() {
 		_gelf="${_gelf},\"_tag\":\"${_esc_tag}\""
 	fi
 
-	# Parse extras — each key=value becomes _key custom field
-	# Note: values containing spaces are not supported (space-delimited format)
-	if [ -n "$_extras" ]; then
-		local _pair _key _val _esc_key _esc_val
-		while IFS= read -r -d ' ' _pair || [ -n "$_pair" ]; do
-			_key="${_pair%%=*}"
-			_val="${_pair#*=}"
-			_val="${_val%$'\n'}"  # strip trailing newline from here-string
-			[ "$_key" = "$_pair" ] && continue  # no = found
-			[ -z "$_key" ] && continue
-			_elog_json_escape "$_key"
-			_esc_key="$_ELOG_RET"
-			_elog_json_escape "$_val"
-			_esc_val="$_ELOG_RET"
-			_gelf="${_gelf},\"_${_esc_key}\":\"${_esc_val}\""
-		done <<< "$_extras"
-	fi
+	# Parse extras via shared helper — callback accesses _gelf from parent scope
+	# shellcheck disable=SC2317  # invoked indirectly via _elog_parse_extras
+	_gelf_extra_cb() {
+		local _key="$1" _val="$2"
+		_elog_json_escape "$_key"
+		local _esc_key="$_ELOG_RET"
+		_elog_json_escape "$_val"
+		local _esc_val="$_ELOG_RET"
+		_gelf="${_gelf},\"_${_esc_key}\":\"${_esc_val}\""
+	}
+	_elog_parse_extras "$_extras" "_gelf_extra_cb"
 
 	_gelf="${_gelf}}"
 	echo "$_gelf"
@@ -946,29 +950,24 @@ _elog_fmt_elk() {
 		_elk="${_elk},\"tags\":[\"${_esc_tag}\"]"
 	fi
 
-	# Labels object from extras (flat key=value map)
-	# Note: values containing spaces are not supported (space-delimited format)
-	if [ -n "$_extras" ]; then
-		local _labels="" _pair _key _val _esc_key _esc_val
-		while IFS= read -r -d ' ' _pair || [ -n "$_pair" ]; do
-			_key="${_pair%%=*}"
-			_val="${_pair#*=}"
-			_val="${_val%$'\n'}"  # strip trailing newline from here-string
-			[ "$_key" = "$_pair" ] && continue  # no = found
-			[ -z "$_key" ] && continue
-			_elog_json_escape "$_key"
-			_esc_key="$_ELOG_RET"
-			_elog_json_escape "$_val"
-			_esc_val="$_ELOG_RET"
-			if [ -n "$_labels" ]; then
-				_labels="${_labels},\"${_esc_key}\":\"${_esc_val}\""
-			else
-				_labels="\"${_esc_key}\":\"${_esc_val}\""
-			fi
-		done <<< "$_extras"
+	# Parse extras via shared helper — callback accesses _labels, _elk from parent scope
+	local _labels=""
+	# shellcheck disable=SC2317  # invoked indirectly via _elog_parse_extras
+	_elk_extra_cb() {
+		local _key="$1" _val="$2"
+		_elog_json_escape "$_key"
+		local _esc_key="$_ELOG_RET"
+		_elog_json_escape "$_val"
+		local _esc_val="$_ELOG_RET"
 		if [ -n "$_labels" ]; then
-			_elk="${_elk},\"labels\":{${_labels}}"
+			_labels="${_labels},\"${_esc_key}\":\"${_esc_val}\""
+		else
+			_labels="\"${_esc_key}\":\"${_esc_val}\""
 		fi
+	}
+	_elog_parse_extras "$_extras" "_elk_extra_cb"
+	if [ -n "$_labels" ]; then
+		_elk="${_elk},\"labels\":{${_labels}}"
 	fi
 
 	_elk="${_elk}}"
@@ -1167,63 +1166,19 @@ elog() {
 		_json_line="{\"ts\":\"${_iso_ts}\",\"host\":\"${_esc_host}\",\"app\":\"${_esc_app}\",\"pid\":${_pid},\"level\":\"${_esc_level}\",\"msg\":\"${_esc_msg}\"}"
 	fi
 
-	# Use dispatch if any modules are registered, else direct write (backward compat)
-	if [ ${#_ELOG_OUTPUT_NAMES[@]} -gt 0 ]; then
-		local _fmt="${ELOG_FORMAT:-classic}"
-		local _out_classic _out_json
-		if [ "$_fmt" = "json" ]; then
-			_out_classic="$_json_line"
-		else
-			_out_classic="$_classic_line"
-		fi
-		_out_json="$_json_line"
-		# Stage level for SIEM handlers (syslog_udp uses _ELOG_EVT_LEVEL)
-		_ELOG_EVT_LEVEL="$_level"
-		_elog_dispatch "elog" "$_out_classic" "$_out_json" "$_level" "$_msg" "$_stdout_flag"
-		_ELOG_EVT_LEVEL=""
+	# Dispatch via output module registry (8 modules always registered at source time)
+	local _fmt="${ELOG_FORMAT:-classic}"
+	local _out_classic _out_json
+	if [ "$_fmt" = "json" ]; then
+		_out_classic="$_json_line"
 	else
-		# No modules registered — direct write (pre-init / backward compat)
-		local _fmt="${ELOG_FORMAT:-classic}"
-		if [ -n "${ELOG_LOG_FILE:-}" ]; then
-			if [ "$_fmt" = "json" ]; then
-				echo "$_json_line" >> "$ELOG_LOG_FILE"
-			else
-				echo "$_classic_line" >> "$ELOG_LOG_FILE"
-			fi
-		fi
-		if [ -n "${ELOG_SYSLOG_FILE:-}" ]; then
-			if [ "$_fmt" = "json" ]; then
-				echo "$_json_line" >> "$ELOG_SYSLOG_FILE"
-			else
-				echo "$_classic_line" >> "$ELOG_SYSLOG_FILE"
-			fi
-		fi
-		# Stdout
-		local _stdout="${ELOG_STDOUT:-always}"
-		case "$_stdout" in
-			always) ;;
-			never) return 0 ;;
-			flag)
-				[ -z "$_stdout_flag" ] && return 0
-				;;
-		esac
-		local _prefix="${ELOG_STDOUT_PREFIX:-full}"
-		case "$_prefix" in
-			full)
-				if [ "$_fmt" = "json" ]; then
-					echo "$_json_line"
-				else
-					echo "$_classic_line"
-				fi
-				;;
-			short)
-				echo "${_app}(${_pid}): $_msg"
-				;;
-			none)
-				echo "$_msg"
-				;;
-		esac
+		_out_classic="$_classic_line"
 	fi
+	_out_json="$_json_line"
+	# Stage level for SIEM handlers (syslog_udp uses _ELOG_EVT_LEVEL)
+	_ELOG_EVT_LEVEL="$_level"
+	_elog_dispatch "elog" "$_out_classic" "$_out_json" "$_level" "$_msg" "$_stdout_flag"
+	_ELOG_EVT_LEVEL=""
 
 	# Periodic log truncation check
 	_ELOG_WRITE_COUNT=$((_ELOG_WRITE_COUNT + 1))
