@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# elog_lib.sh — Structured Event Logging Library 1.0.2
+# elog_lib.sh — Structured Event Logging Library 1.0.3
 ###
 # Copyright (C) 2002-2026 R-fx Networks <proj@rfxn.com>
 #                         Ryan MacDonald <ryan@rfxn.com>
@@ -26,7 +26,7 @@
 
 # Source guard — safe for repeated sourcing
 # shellcheck disable=SC2154
-[[ -n "${_ELOG_LIB_LOADED:-}" ]] && return 0 2>/dev/null
+[[ -n "${_ELOG_LIB_LOADED:-}" ]] && return 0 2>/dev/null  # suppress error when executed (not sourced)
 _ELOG_LIB_LOADED=1
 # shellcheck disable=SC2034 # version checked by consumers
 ELOG_LIB_VERSION="1.0.3"
@@ -184,7 +184,7 @@ elog_init() {
 
 	# Create log directory
 	if [ ! -d "$_log_dir" ]; then
-		if ! mkdir -p "$_log_dir" 2>/dev/null; then
+		if ! mkdir -p "$_log_dir" 2>/dev/null; then  # suppress permission errors; failure handled below
 			echo "elog_lib: failed to create log directory: $_log_dir" >&2
 			return 1
 		fi
@@ -196,7 +196,7 @@ elog_init() {
 	for _f in "$_log_file" "$_audit_file"; do
 		[ -z "$_f" ] && continue  # skip empty paths (audit disabled)
 		if [ ! -f "$_f" ]; then
-			touch "$_f" 2>/dev/null || {
+			touch "$_f" 2>/dev/null || {  # suppress permission errors; failure handled in || block
 				echo "elog_lib: failed to create log file: $_f" >&2
 				return 1
 			}
@@ -207,19 +207,19 @@ elog_init() {
 	# Legacy symlink
 	if [ -n "${ELOG_LEGACY_LOG:-}" ]; then
 		if [ ! -e "$ELOG_LEGACY_LOG" ] && [ ! -L "$ELOG_LEGACY_LOG" ]; then
-			ln -sf "$_log_file" "$ELOG_LEGACY_LOG" 2>/dev/null || true
+			ln -sf "$_log_file" "$ELOG_LEGACY_LOG" 2>/dev/null || true  # safe: legacy symlink is optional
 		fi
 	fi
 
 	# Auto-enable output modules
 	if [ -n "$_log_file" ]; then
-		elog_output_enable "file" 2>/dev/null || true
+		elog_output_enable "file" 2>/dev/null || true  # safe: module may not be registered yet
 	fi
 	if [ -n "$_audit_file" ]; then
-		elog_output_enable "audit_file" 2>/dev/null || true
+		elog_output_enable "audit_file" 2>/dev/null || true  # safe: module may not be registered yet
 	fi
 	if [ -n "${ELOG_SYSLOG_FILE:-}" ]; then
-		elog_output_enable "syslog_file" 2>/dev/null || true
+		elog_output_enable "syslog_file" 2>/dev/null || true  # safe: module may not be registered yet
 	fi
 
 	# Probe UDP transport only if syslog_udp module is actually enabled
@@ -266,7 +266,7 @@ elog_logrotate_snippet() {
 	    sharedscripts
 	    postrotate
 	        # Signal consumer to reopen log handles (if applicable)
-	        [ -f /var/run/${_app}.pid ] && kill -HUP \$(cat /var/run/${_app}.pid) 2>/dev/null || true
+	        [ -f /var/run/${_app}.pid ] && kill -HUP \$(cat /var/run/${_app}.pid) 2>/dev/null || true  # safe: PID may not exist
 	    endscript
 	}
 	LOGROTATE
@@ -277,7 +277,7 @@ elog_logrotate_snippet() {
 # Called periodically from elog(), not on every write.
 _elog_truncate_check() {
 	local _max="${ELOG_LOG_MAX_LINES:-0}"
-	[ "$_max" -le 0 ] 2>/dev/null && return 0
+	[ "$_max" -le 0 ] 2>/dev/null && return 0  # suppress non-integer warning when unset/empty
 	local _file="${ELOG_LOG_FILE:-}"
 	[ -z "$_file" ] && return 0
 	[ ! -f "$_file" ] && return 0
@@ -290,7 +290,7 @@ _elog_truncate_check() {
 		_tmpf=$(mktemp "${_file}.XXXXXX") || return 0
 		tail -n "$_max" "$_file" > "$_tmpf"
 		cat "$_tmpf" > "$_file"
-		rm -f "$_tmpf"
+		command rm -f "$_tmpf"
 	fi
 }
 
