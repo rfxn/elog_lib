@@ -1,6 +1,12 @@
 elog_lib CHANGELOG
 ==================
 
+- v1.0.4 | Mar 23 2026:
+
+  [Change] README restructured to floor-level documentation convention: numbered
+      sections, flat-square badges, centered badge row, bold one-liner, copyright
+      blockquote, exit codes table, ## 3. Configuration and ## 4. Usage sections
+
 - v1.0.4 | Mar 16 2026:
 
   [Fix] JSON-escape _host, _app, _level in elog() and elog_event() JSON output;
