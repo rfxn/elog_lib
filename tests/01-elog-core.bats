@@ -235,6 +235,29 @@ d	e'
 	[[ "$_ELOG_RET" == *'a\\b\"c\nd\te'* ]]
 }
 
+@test "_elog_json_escape: escapes ESC byte (0x1b) to \\u001b" {
+	_elog_json_escape $'hello\x1bworld'
+	[[ "$_ELOG_RET" == 'hello\u001bworld' ]]
+}
+
+@test "_elog_json_escape: escapes multiple C0 control characters" {
+	_elog_json_escape $'a\x01b\x02c\x1fd'
+	[[ "$_ELOG_RET" == 'a\u0001b\u0002c\u001fd' ]]
+}
+
+@test "_elog_json_escape: C0 sweep does not double-escape named chars" {
+	# Tab, newline, CR should still use named escapes, not \uXXXX
+	_elog_json_escape $'a\tb\nc\rd'
+	[[ "$_ELOG_RET" == 'a\tb\nc\rd' ]]
+}
+
+@test "elog: JSON output escapes C0 control characters in message" {
+	ELOG_FORMAT="json"
+	run elog info $'esc\x1btest'
+	assert_success
+	assert_output --partial '\u001b'
+}
+
 @test "_elog_extract_tag: returns empty for messages without {tag}" {
 	_elog_extract_tag "no tag here"
 	[ -z "$_ELOG_RET" ]

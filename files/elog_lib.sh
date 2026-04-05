@@ -132,7 +132,8 @@ _elog_level_name() {
 }
 
 # _elog_json_escape(str) — escape string for safe JSON embedding
-# Handles: backslash, double-quote, newline, tab, carriage return, backspace, form feed
+# Handles all 33 C0 control characters (0x00-0x1F) per RFC 8259 §7:
+# Named escapes for the 7 common chars, then \uXXXX sweep for the remaining 26.
 _elog_json_escape() {
 	_ELOG_RET="$1"
 	_ELOG_RET="${_ELOG_RET//\\/\\\\}"
@@ -142,6 +143,20 @@ _elog_json_escape() {
 	_ELOG_RET="${_ELOG_RET//$'\r'/\\r}"
 	_ELOG_RET="${_ELOG_RET//$'\x08'/\\b}"
 	_ELOG_RET="${_ELOG_RET//$'\x0c'/\\f}"
+	# Sweep remaining C0 control characters (0x00-0x1F) to \uXXXX per RFC 8259
+	# Skips: 08(bs) 09(tab) 0a(lf) 0b(vt—rare) 0c(ff) 0d(cr) — handled above
+	local _c
+	for _c in $'\x00' $'\x01' $'\x02' $'\x03' $'\x04' $'\x05' $'\x06' $'\x07' \
+	          $'\x0b' $'\x0e' $'\x0f' $'\x10' $'\x11' $'\x12' $'\x13' $'\x14' \
+	          $'\x15' $'\x16' $'\x17' $'\x18' $'\x19' $'\x1a' $'\x1b' $'\x1c' \
+	          $'\x1d' $'\x1e' $'\x1f'; do
+		if [[ "$_ELOG_RET" == *"$_c"* ]]; then
+			# printf to get the hex code for this byte
+			local _hex
+			_hex=$(printf '%04x' "'$_c")
+			_ELOG_RET="${_ELOG_RET//$_c/\\u$_hex}"
+		fi
+	done
 }
 
 # _elog_parse_extras(extras, callback_fn) — parse space-delimited key=value pairs
