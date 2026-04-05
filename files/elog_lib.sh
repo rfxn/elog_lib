@@ -243,7 +243,7 @@ elog_init() {
 		chmod 750 "$_log_dir"
 	fi
 
-	# Touch log files with correct permissions
+	# Touch log files with correct permissions; enforce 640 on existing files
 	local _f
 	for _f in "$_log_file" "$_audit_file"; do
 		[ -z "$_f" ] && continue  # skip empty paths (audit disabled)
@@ -253,8 +253,8 @@ elog_init() {
 				umask "$_old_umask"
 				return 1
 			}
-			chmod 640 "$_f"
 		fi
+		chmod 640 "$_f"
 	done
 
 	umask "$_old_umask"

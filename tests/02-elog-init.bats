@@ -101,6 +101,25 @@ teardown() {
 	assert_failure
 }
 
+# --- Permission enforcement ---
+
+@test "elog_init: enforces 640 on pre-existing log file with wrong perms" {
+	local log_dir="$TEST_TMPDIR/log/permtest"
+	mkdir -p "$log_dir"
+	local logfile="$log_dir/permtest.log"
+	touch "$logfile"
+	chmod 666 "$logfile"
+	ELOG_APP="permtest"
+	ELOG_LOG_DIR="$log_dir"
+	ELOG_LOG_FILE="$logfile"
+	ELOG_AUDIT_FILE=""
+	run elog_init
+	assert_success
+	local perms
+	perms=$(stat -c '%a' "$logfile")
+	[ "$perms" = "640" ]
+}
+
 # --- Legacy symlink ---
 
 @test "elog_init: creates legacy symlink when ELOG_LEGACY_LOG set" {
