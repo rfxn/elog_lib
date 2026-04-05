@@ -472,11 +472,22 @@ _elog_module_active() {
 # Built-in Output Handlers
 # ---------------------------------------------------------------------------
 
+# _elog_safe_append(file, line) — append with symlink guard
+# Refuses to write through symlinks to prevent log-target hijacking.
+_elog_safe_append() {
+	local _file="$1" _line="$2"
+	if [ -L "$_file" ]; then
+		echo "elog_lib: refusing to append to symlink: $_file" >&2
+		return 1
+	fi
+	echo "$_line" >> "$_file"
+}
+
 # _elog_out_file formatted_line — append to ELOG_LOG_FILE
 _elog_out_file() {
 	local _line="$1"
 	if [ -n "${ELOG_LOG_FILE:-}" ]; then
-		echo "$_line" >> "$ELOG_LOG_FILE"
+		_elog_safe_append "$ELOG_LOG_FILE" "$_line"
 	fi
 }
 
@@ -485,7 +496,7 @@ _elog_out_file() {
 _elog_out_audit() {
 	local _line="$1"
 	if [ -n "${ELOG_AUDIT_FILE:-}" ]; then
-		echo "$_line" >> "$ELOG_AUDIT_FILE"
+		_elog_safe_append "$ELOG_AUDIT_FILE" "$_line"
 	fi
 }
 
@@ -493,7 +504,7 @@ _elog_out_audit() {
 _elog_out_syslog_file() {
 	local _line="$1"
 	if [ -n "${ELOG_SYSLOG_FILE:-}" ]; then
-		echo "$_line" >> "$ELOG_SYSLOG_FILE"
+		_elog_safe_append "$ELOG_SYSLOG_FILE" "$_line"
 	fi
 }
 
@@ -611,7 +622,7 @@ _elog_fmt_cef() {
 _elog_out_cef() {
 	local _line="$1"
 	if [ -n "${ELOG_CEF_FILE:-}" ]; then
-		echo "$_line" >> "$ELOG_CEF_FILE"
+		_elog_safe_append "$ELOG_CEF_FILE" "$_line"
 	fi
 }
 
@@ -842,7 +853,7 @@ _elog_out_gelf() {
 
 	# Write to capture file if configured (testing/debug)
 	if [ -n "${ELOG_GELF_FILE:-}" ]; then
-		echo "$_line" >> "$ELOG_GELF_FILE"
+		_elog_safe_append "$ELOG_GELF_FILE" "$_line"
 	fi
 
 	# Guard: no host configured = no network send
@@ -1008,7 +1019,7 @@ _elog_out_elk_json() {
 
 	# Write to capture file if configured (testing/debug)
 	if [ -n "${ELOG_ELK_FILE:-}" ]; then
-		echo "$_line" >> "$ELOG_ELK_FILE"
+		_elog_safe_append "$ELOG_ELK_FILE" "$_line"
 	fi
 
 	# Guard: no URL configured = no network send

@@ -294,6 +294,41 @@ teardown() {
 	[ "$count" -eq 5 ]
 }
 
+# --- Symlink guard ---
+
+@test "_elog_safe_append: refuses to write through symlink" {
+	local target="$TEST_TMPDIR/target.log"
+	local link="$TEST_TMPDIR/link.log"
+	echo "original" > "$target"
+	ln -sf "$target" "$link"
+	run _elog_safe_append "$link" "injected"
+	[ "$status" -ne 0 ]
+	[[ "$output" == *"refusing to append to symlink"* ]]
+	# Target must NOT contain injected content
+	run cat "$target"
+	[[ "$output" != *"injected"* ]]
+}
+
+@test "_elog_safe_append: writes to regular file" {
+	local logfile="$TEST_TMPDIR/regular.log"
+	touch "$logfile"
+	_elog_safe_append "$logfile" "test line"
+	run cat "$logfile"
+	[[ "$output" == *"test line"* ]]
+}
+
+@test "elog: refuses to write when ELOG_LOG_FILE is a symlink" {
+	local target="$TEST_TMPDIR/target.log"
+	local link="$TEST_TMPDIR/symlink.log"
+	echo "original" > "$target"
+	ln -sf "$target" "$link"
+	ELOG_LOG_FILE="$link"
+	run elog info "should not appear"
+	# Target must NOT contain the message
+	run cat "$target"
+	[[ "$output" != *"should not appear"* ]]
+}
+
 @test "_elog_truncate_check: preserves inode" {
 	local logfile="$TEST_TMPDIR/inode.log"
 	ELOG_LOG_FILE="$logfile"
