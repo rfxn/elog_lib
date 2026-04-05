@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/rfxn/elog_lib/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/rfxn/elog_lib/ci.yml?style=flat-square&label=CI" alt="CI"></a>
-  <a href="CHANGELOG"><img src="https://img.shields.io/badge/version-1.0.4-blue.svg?style=flat-square" alt="Version"></a>
+  <a href="CHANGELOG"><img src="https://img.shields.io/badge/version-1.0.5-blue.svg?style=flat-square" alt="Version"></a>
   <a href="https://www.gnu.org/software/bash/"><img src="https://img.shields.io/badge/bash-4.1%2B-green.svg?style=flat-square" alt="Bash"></a>
   <a href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html"><img src="https://img.shields.io/badge/license-GPL%20v2-orange.svg?style=flat-square" alt="License"></a>
 </p>
@@ -135,6 +135,7 @@ before calling `elog_init()` or the first `elog()` call.
 | `ELOG_STDOUT` | `always` | Stdout mode: `always`, `never`, or `flag` |
 | `ELOG_STDOUT_PREFIX` | `full` | Stdout prefix: `full`, `short`, or `none` |
 | `ELOG_LOG_MAX_LINES` | `0` | Max app log lines before truncation (0 = disabled) |
+| `ELOG_AUDIT_MAX_LINES` | `0` | Max audit log lines before truncation (0 = disabled) |
 
 ### 3.2 Logrotate Variables
 
