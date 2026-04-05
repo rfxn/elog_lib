@@ -173,8 +173,47 @@ teardown() {
 
 # --- Truncation counter ---
 
-@test "elog_event: does NOT increment truncation counter" {
+@test "elog_event: does NOT increment app log truncation counter" {
 	local before="$_ELOG_WRITE_COUNT"
 	elog_event "block_added" "warn" "no truncate" > /dev/null
 	[ "$_ELOG_WRITE_COUNT" -eq "$before" ]
+}
+
+@test "elog_event: increments audit write counter" {
+	local before="$_ELOG_AUDIT_WRITE_COUNT"
+	elog_event "block_added" "warn" "audit count" > /dev/null
+	[ "$_ELOG_AUDIT_WRITE_COUNT" -gt "$before" ]
+}
+
+@test "elog_event: truncates audit log when ELOG_AUDIT_MAX_LINES set" {
+	local audit="$TEST_TMPDIR/audit-trunc.log"
+	ELOG_AUDIT_FILE="$audit"
+	ELOG_AUDIT_MAX_LINES=5
+	# Force truncation check on every write for this test
+	_ELOG_TRUNCATE_CHECK_INTERVAL=1
+	_ELOG_AUDIT_WRITE_COUNT=0
+	local i
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		elog_event "test" "info" "event $i" > /dev/null
+	done
+	local count
+	count=$(wc -l < "$audit")
+	count="${count## }"
+	[ "$count" -le 5 ]
+}
+
+@test "elog_event: audit log not truncated when ELOG_AUDIT_MAX_LINES=0" {
+	local audit="$TEST_TMPDIR/audit-notrunc.log"
+	ELOG_AUDIT_FILE="$audit"
+	ELOG_AUDIT_MAX_LINES=0
+	_ELOG_TRUNCATE_CHECK_INTERVAL=1
+	_ELOG_AUDIT_WRITE_COUNT=0
+	local i
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		elog_event "test" "info" "event $i" > /dev/null
+	done
+	local count
+	count=$(wc -l < "$audit")
+	count="${count## }"
+	[ "$count" -eq 10 ]
 }

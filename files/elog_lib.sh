@@ -47,6 +47,7 @@ ELOG_LIB_VERSION="1.0.4"
 # ELOG_STDOUT       — "always"|"never"|"flag" (default: always)
 # ELOG_STDOUT_PREFIX — "full"|"short"|"none" (default: full)
 # ELOG_LOG_MAX_LINES — max lines in app log before truncation (0 = disabled)
+# ELOG_AUDIT_MAX_LINES — max lines in audit log before truncation (0 = disabled)
 # ELOG_ROTATE_FREQUENCY — logrotate frequency (default: weekly)
 # ELOG_ROTATE_COUNT — logrotate keep count (default: 12)
 # ELOG_ROTATE_COMPRESS — logrotate compress (default: compress)
@@ -78,6 +79,7 @@ ELOG_LIB_VERSION="1.0.4"
 # --- Internal state ---
 _ELOG_INIT_DONE=0
 _ELOG_WRITE_COUNT=0
+_ELOG_AUDIT_WRITE_COUNT=0
 _ELOG_RET=""
 _ELOG_TRUNCATE_CHECK_INTERVAL=50
 
@@ -1267,7 +1269,7 @@ elog_critical() { elog critical "$@"; }
 # - Builds JSON envelope with mandatory fields: ts, host, app, pid, type, level, msg
 # - Extracts {tag} from message; parses remaining args as key=value extra fields
 # - Extra values must not contain spaces (space-delimited internal format)
-# - Does NOT increment _ELOG_WRITE_COUNT (audit log not subject to truncation)
+# - Increments _ELOG_AUDIT_WRITE_COUNT; truncates audit log when ELOG_AUDIT_MAX_LINES > 0
 # - Returns 0 on success
 elog_event() {
 	local _type="${1:-}"
@@ -1394,6 +1396,12 @@ elog_event() {
 
 	# Dispatch via event api_source — reaches audit_file and source="all" modules
 	_elog_dispatch "event" "$_classic_line" "$_json_line" "$_level" "$_msg" ""
+
+	# Periodic audit log truncation check
+	_ELOG_AUDIT_WRITE_COUNT=$((_ELOG_AUDIT_WRITE_COUNT + 1))
+	if [ $((_ELOG_AUDIT_WRITE_COUNT % _ELOG_TRUNCATE_CHECK_INTERVAL)) -eq 0 ]; then
+		_elog_truncate_check_file "${ELOG_AUDIT_FILE:-}" "${ELOG_AUDIT_MAX_LINES:-0}"
+	fi
 
 	# Clear staging globals
 	_ELOG_EVT_TS=""
