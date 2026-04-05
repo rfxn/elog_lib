@@ -171,6 +171,19 @@ teardown() {
 	[ "$(wc -l < "$audit")" -eq 1 ]
 }
 
+# --- Classic format newline sanitization ---
+
+@test "elog_event: classic format sanitizes embedded newlines" {
+	# elog_event dispatches classic line to stdout (source=all, format=classic)
+	elog_output_enable "stdout"
+	ELOG_STDOUT="always"
+	ELOG_STDOUT_PREFIX="full"
+	run elog_event "test_type" "info" $'line1\nline2'
+	assert_success
+	# Output should contain literal backslash-n, not an actual newline
+	assert_output --partial 'line1\nline2'
+}
+
 # --- Truncation counter ---
 
 @test "elog_event: does NOT increment app log truncation counter" {

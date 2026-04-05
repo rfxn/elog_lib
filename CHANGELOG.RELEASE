@@ -1,28 +1,16 @@
 - v1.0.5 | Apr 05 2026:
 
-  [Fix] _elog_json_escape() now escapes all 33 C0 control characters (0x00-0x1F)
-      per RFC 8259 §7; previously missed 26 including ESC (terminal injection vector)
+  [Fix] _elog_json_escape() now escapes all 32 C0 control characters (0x00-0x1F)
+      per RFC 8259 §7; previously missed 27 including ESC (terminal injection vector)
   [Fix] All 6 file output handlers (file, audit, syslog_file, CEF, GELF, ELK) now
       refuse to write through symlinks via _elog_safe_append() guard
   [Fix] _elog_truncate_check() refuses to truncate symlinked log files, preventing
       TOCTOU symlink-following overwrite during log rotation
-  [Fix] Signal trap save/restore in truncation prevents clobbering consumer handlers
+  [Fix] Signal trap save/restore in truncation prevents clobbering consumer handlers;
+      restores default signal disposition when no prior consumer trap was set
   [Fix] Classic format output sanitizes embedded newlines to prevent log injection
+      in both elog() and elog_event() paths
   [Fix] elog_init() enforces chmod 640 on pre-existing log files, not only new files
   [New] ELOG_AUDIT_MAX_LINES: optional audit log size limit (default: 0 = disabled)
   [Change] Truncation refactored to parameterized _elog_truncate_check_file() shared
       by app log and audit log; bare cat changed to command cat
-  [Fix] _elog_json_escape() now handles \b (backspace) and \f (form feed) per RFC 8259
-  [Fix] CEF extension key names sanitized to prevent structure corruption
-  [Fix] Bare rm in _elog_truncate_check() changed to command rm per alias-safety convention
-  [Fix] elog_init() sets umask 027 during file/directory creation, restores on all paths
-  [Fix] Temp file cleanup trap in _elog_truncate_check() for signal safety
-  [Fix] Legacy symlink creation simplified to avoid TOCTOU race
-  [Fix] Version header comment synced with ELOG_LIB_VERSION
-  [Change] Internal helpers converted from echo-return to result-variable pattern,
-      eliminating ~70% of per-call subshell fork overhead
-  [Change] Hostname cached at first use; eliminates repeated fork+exec across 3 call sites
-  [Change] Timestamps computed from single date invocation (was 2 per call)
-  [Change] SIEM module gating uses O(1) cached index lookup (was O(n) linear scan)
-  [Change] Shared _elog_parse_extras() replaces 3x copy-paste parsing loop
-  [Change] Unreachable 42-line direct-write fallback removed from elog()

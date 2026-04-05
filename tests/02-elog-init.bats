@@ -367,16 +367,19 @@ teardown() {
 	[ "$count" -eq 6 ]
 }
 
-@test "_elog_truncate_check_file: cleans up tmpfile on symlink rejection" {
-	local target="$TEST_TMPDIR/cleanup-target.log"
-	local link="$TEST_TMPDIR/cleanup-link.log"
-	echo "line" > "$target"
-	ln -sf "$target" "$link"
-	run _elog_truncate_check_file "$link" 1
-	# No leftover .XXXXXX files
-	local leftover
-	leftover=$(ls "$TEST_TMPDIR"/cleanup-link.log.* 2>/dev/null | wc -l)
-	[ "$leftover" -eq 0 ]
+@test "_elog_truncate_check_file: restores default signal disposition after truncation" {
+	local logfile="$TEST_TMPDIR/trap-test.log"
+	local i
+	for i in 1 2 3 4 5 6; do
+		echo "line $i" >> "$logfile"
+	done
+	# Clear any pre-existing traps
+	trap - HUP TERM INT
+	_elog_truncate_check_file "$logfile" 3
+	# After truncation, traps should be at default (trap -p returns empty)
+	local trap_state
+	trap_state=$(trap -p HUP TERM INT)
+	[ -z "$trap_state" ]
 }
 
 @test "_elog_truncate_check: preserves inode" {

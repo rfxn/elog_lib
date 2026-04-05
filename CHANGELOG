@@ -3,8 +3,8 @@ elog_lib CHANGELOG
 
 - v1.0.5 | Apr 05 2026:
 
-  [Fix] _elog_json_escape() now escapes all 33 C0 control characters (0x00-0x1F)
-      per RFC 8259 §7; previously missed 26 including ESC (terminal injection vector)
+  [Fix] _elog_json_escape() now escapes all 32 C0 control characters (0x00-0x1F)
+      per RFC 8259 §7; previously missed 27 including ESC (terminal injection vector)
   [Fix] All 6 file output handlers (file, audit, syslog_file, CEF, GELF, ELK) now
       refuse to write through symlinks via _elog_safe_append() guard
   [Fix] _elog_truncate_check() refuses to truncate symlinked log files, preventing

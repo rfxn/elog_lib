@@ -134,8 +134,9 @@ _elog_level_name() {
 }
 
 # _elog_json_escape(str) — escape string for safe JSON embedding
-# Handles all 33 C0 control characters (0x00-0x1F) per RFC 8259 §7:
-# Named escapes for the 7 common chars, then \uXXXX sweep for the remaining 26.
+# Handles C0 control characters (0x01-0x1F) per RFC 8259 §7:
+# Named escapes for 5 chars + backslash + double-quote, then \uXXXX sweep for remaining 26.
+# NUL (0x00) is unreachable — bash cannot store NUL bytes in variables.
 _elog_json_escape() {
 	_ELOG_RET="$1"
 	_ELOG_RET="${_ELOG_RET//\\/\\\\}"
@@ -145,10 +146,11 @@ _elog_json_escape() {
 	_ELOG_RET="${_ELOG_RET//$'\r'/\\r}"
 	_ELOG_RET="${_ELOG_RET//$'\x08'/\\b}"
 	_ELOG_RET="${_ELOG_RET//$'\x0c'/\\f}"
-	# Sweep remaining C0 control characters (0x00-0x1F) to \uXXXX per RFC 8259
-	# Skips: 08(bs) 09(tab) 0a(lf) 0b(vt—rare) 0c(ff) 0d(cr) — handled above
+	# Sweep remaining C0 control characters to \uXXXX per RFC 8259
+	# Named escapes handle: 08(bs) 09(tab) 0a(lf) 0c(ff) 0d(cr)
+	# NUL (0x00) omitted: bash cannot store NUL bytes in variables
 	local _c
-	for _c in $'\x00' $'\x01' $'\x02' $'\x03' $'\x04' $'\x05' $'\x06' $'\x07' \
+	for _c in $'\x01' $'\x02' $'\x03' $'\x04' $'\x05' $'\x06' $'\x07' \
 	          $'\x0b' $'\x0e' $'\x0f' $'\x10' $'\x11' $'\x12' $'\x13' $'\x14' \
 	          $'\x15' $'\x16' $'\x17' $'\x18' $'\x19' $'\x1a' $'\x1b' $'\x1c' \
 	          $'\x1d' $'\x1e' $'\x1f'; do
@@ -359,10 +361,10 @@ _elog_truncate_check_file() {
 		tail -n "$_max" "$_file" > "$_tmpf"
 		command cat "$_tmpf" > "$_file"
 		command rm -f "$_tmpf"
-		# Restore consumer signal handlers
-		eval "$_prev_trap_hup"
-		eval "$_prev_trap_term"
-		eval "$_prev_trap_int"
+		# Restore consumer signal handlers; reset to default if none were set
+		if [ -n "$_prev_trap_hup" ]; then eval "$_prev_trap_hup"; else trap - HUP; fi
+		if [ -n "$_prev_trap_term" ]; then eval "$_prev_trap_term"; else trap - TERM; fi
+		if [ -n "$_prev_trap_int" ]; then eval "$_prev_trap_int"; else trap - INT; fi
 	fi
 }
 
@@ -1363,12 +1365,13 @@ elog_event() {
 	fi
 	_json_line="${_json_line}${_extra}}"
 
-	# Build classic line: timestamp host app(pid): [type] message
+	# Build classic line — sanitize newlines to prevent log injection
+	local _classic_msg="${_json_msg//$'\n'/\\n}"
 	local _classic_line
 	if [ -n "$_tag" ]; then
-		_classic_line="$_ts $_host ${_app}(${_pid}): [${_type}] {${_tag}} ${_json_msg}"
+		_classic_line="$_ts $_host ${_app}(${_pid}): [${_type}] {${_tag}} ${_classic_msg}"
 	else
-		_classic_line="$_ts $_host ${_app}(${_pid}): [${_type}] ${_json_msg}"
+		_classic_line="$_ts $_host ${_app}(${_pid}): [${_type}] ${_classic_msg}"
 	fi
 
 	# Stage event context for SIEM handlers (CEF, syslog_udp)
