@@ -1,6 +1,21 @@
 elog_lib CHANGELOG
 ==================
 
+- v1.0.5 | Apr 05 2026:
+
+  [Fix] _elog_json_escape() now escapes all 33 C0 control characters (0x00-0x1F)
+      per RFC 8259 §7; previously missed 26 including ESC (terminal injection vector)
+  [Fix] All 6 file output handlers (file, audit, syslog_file, CEF, GELF, ELK) now
+      refuse to write through symlinks via _elog_safe_append() guard
+  [Fix] _elog_truncate_check() refuses to truncate symlinked log files, preventing
+      TOCTOU symlink-following overwrite during log rotation
+  [Fix] Signal trap save/restore in truncation prevents clobbering consumer handlers
+  [Fix] Classic format output sanitizes embedded newlines to prevent log injection
+  [Fix] elog_init() enforces chmod 640 on pre-existing log files, not only new files
+  [New] ELOG_AUDIT_MAX_LINES: optional audit log size limit (default: 0 = disabled)
+  [Change] Truncation refactored to parameterized _elog_truncate_check_file() shared
+      by app log and audit log; bare cat changed to command cat
+
 - v1.0.4 | Mar 23 2026:
 
   [Change] README restructured to floor-level documentation convention: numbered
