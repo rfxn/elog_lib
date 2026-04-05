@@ -328,15 +328,18 @@ elog_logrotate_snippet() {
 	LOGROTATE
 }
 
-# _elog_truncate_check() — truncate app log if over ELOG_LOG_MAX_LINES
+# _elog_truncate_check_file(file, max_lines) — truncate a log file if over limit
 # Atomic: tail+cat to preserve inode (critical for inotifywait consumers).
-# Called periodically from elog(), not on every write.
-_elog_truncate_check() {
-	local _max="${ELOG_LOG_MAX_LINES:-0}"
+# Refuses to truncate symlinks. Saves/restores consumer signal handlers.
+_elog_truncate_check_file() {
+	local _file="$1" _max="$2"
 	[ "$_max" -le 0 ] 2>/dev/null && return 0  # suppress non-integer warning when unset/empty
-	local _file="${ELOG_LOG_FILE:-}"
 	[ -z "$_file" ] && return 0
 	[ ! -f "$_file" ] && return 0
+	if [ -L "$_file" ]; then
+		echo "elog_lib: refusing to truncate symlink: $_file" >&2
+		return 1
+	fi
 
 	local _count
 	_count=$(wc -l < "$_file")
@@ -344,13 +347,27 @@ _elog_truncate_check() {
 	if [ "$_count" -gt "$_max" ]; then
 		local _tmpf
 		_tmpf=$(mktemp "${_file}.XXXXXX") || return 0
+		# Save consumer signal handlers before overriding
+		local _prev_trap_hup _prev_trap_term _prev_trap_int
+		_prev_trap_hup=$(trap -p HUP)
+		_prev_trap_term=$(trap -p TERM)
+		_prev_trap_int=$(trap -p INT)
 		# shellcheck disable=SC2064
 		trap "command rm -f '$_tmpf'" HUP TERM INT
 		tail -n "$_max" "$_file" > "$_tmpf"
-		cat "$_tmpf" > "$_file"
+		command cat "$_tmpf" > "$_file"
 		command rm -f "$_tmpf"
-		trap - HUP TERM INT
+		# Restore consumer signal handlers
+		eval "$_prev_trap_hup"
+		eval "$_prev_trap_term"
+		eval "$_prev_trap_int"
 	fi
+}
+
+# _elog_truncate_check() — truncate app log if over ELOG_LOG_MAX_LINES
+# Wrapper for backward compatibility; called periodically from elog().
+_elog_truncate_check() {
+	_elog_truncate_check_file "${ELOG_LOG_FILE:-}" "${ELOG_LOG_MAX_LINES:-0}"
 }
 
 # _elog_auto_enable — enable output modules on first use (pre-init fallback)
