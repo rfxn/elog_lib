@@ -14,3 +14,4 @@
   [New] ELOG_AUDIT_MAX_LINES: optional audit log size limit (default: 0 = disabled)
   [Change] Truncation refactored to parameterized _elog_truncate_check_file() shared
       by app log and audit log; bare cat changed to command cat
+  [Change] CI: batsman workflow pin v1.0.3 → v1.4.0
