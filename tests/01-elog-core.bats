@@ -96,6 +96,17 @@ teardown() {
 	assert_output --partial '\\\\'
 }
 
+@test "elog: classic format sanitizes embedded newlines" {
+	ELOG_FORMAT="classic"
+	run elog info $'line1\nline2'
+	assert_success
+	# Must be a single output line with literal \n, not two lines
+	local line_count
+	line_count=$(echo "$output" | wc -l)
+	[ "$line_count" -eq 1 ]
+	[[ "$output" == *'line1\nline2'* ]]
+}
+
 @test "elog: JSON pid is unquoted integer" {
 	ELOG_FORMAT="json"
 	run elog info "pid test"

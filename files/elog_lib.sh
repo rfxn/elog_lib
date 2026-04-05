@@ -1191,9 +1191,10 @@ elog() {
 	_app="${ELOG_APP:-${0##*/}}"
 	_pid="$$"
 
-	# Build classic formatted line
+	# Build classic formatted line — sanitize newlines to prevent log injection
+	local _classic_msg="${_msg//$'\n'/\\n}"
 	local _classic_line
-	_classic_line="$_ts $_host ${_app}(${_pid}): $_msg"
+	_classic_line="$_ts $_host ${_app}(${_pid}): $_classic_msg"
 
 	# Build JSON formatted line
 	local _json_line _esc_msg _tag _esc_tag _json_msg
