@@ -1,6 +1,16 @@
 elog_lib CHANGELOG
 ==================
 
+- v1.0.6 | Apr 11 2026:
+
+  [Change] files/elog_lib.sh: replaced 44-line ELOG_* configuration variable
+      prose catalogue at file header with a 3-line cross-reference to
+      README.md § 3. Configuration (single source of truth for defaults)
+  [Change] files/elog_lib.sh: removed 26 banner separator lines (# ----- style).
+      Load-bearing SIEM/CEF/GELF/ECS/API-contract documentation preserved on
+      all 8 function/section headers
+  [Change] ELOG_LIB_VERSION: 1.0.5 → 1.0.6
+
 - v1.0.5 | Apr 05 2026:
 
   [Fix] _elog_json_escape() now escapes all 32 C0 control characters (0x00-0x1F)
